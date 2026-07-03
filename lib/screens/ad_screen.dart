@@ -1,6 +1,9 @@
-import 'dart:io';
+import 'dart:io' show File;
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/ad_model.dart';
 import '../services/firebase_service.dart';
@@ -23,7 +26,7 @@ class _AdScreenState extends State<AdScreen> {
   final _tiktokCtrl = TextEditingController();
   final _instagramCtrl = TextEditingController();
 
-  final List<File?> _localPhotos = List.filled(5, null);
+  final List<XFile?> _localPhotos = List.filled(5, null);
   final List<String> _existingUrls = List.filled(5, '');
   bool _saving = false;
   bool _initialLoading = true;
@@ -105,7 +108,7 @@ class _AdScreenState extends State<AdScreen> {
       imageQuality: 85,
     );
     if (picked != null && mounted) {
-      setState(() => _localPhotos[index] = File(picked.path));
+      setState(() => _localPhotos[index] = picked);
     }
   }
 
@@ -116,15 +119,23 @@ class _AdScreenState extends State<AdScreen> {
     });
   }
 
+  Future<void> _showLoginSheet() async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _GoogleLoginSheet(),
+    );
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null && !user.isAnonymous && mounted) {
+      setState(() => _isAnonymous = false);
+      await _save();
+    }
+  }
+
   Future<void> _save() async {
-    if (_isAnonymous) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('الزوار لا يمكنهم النشر — سجّل دخولاً بـ Google أولاً'),
-          backgroundColor: Color(0xFFB45309),
-          duration: Duration(seconds: 3),
-        ),
-      );
+    if (_isAnonymous || FirebaseAuth.instance.currentUser == null) {
+      await _showLoginSheet();
       return;
     }
 
@@ -255,30 +266,7 @@ class _AdScreenState extends State<AdScreen> {
             )
           : Column(
               children: [
-                if (_isAnonymous)
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    color: const Color(0xFFB45309),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.lock_outline_rounded,
-                            color: Colors.white, size: 18),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'أنت زائر — لا يمكنك النشر. سجّل دخولاً بـ Google للنشر.',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                Expanded(
+                      Expanded(
                   child: Form(
                     key: _formKey,
                     child: ListView(
@@ -392,23 +380,12 @@ class _AdScreenState extends State<AdScreen> {
 
                         ElevatedButton.icon(
                           onPressed: _saving ? null : _save,
-                          icon: Icon(
-                            _isAnonymous
-                                ? Icons.lock_outline_rounded
-                                : Icons.campaign_rounded,
-                            size: 22,
-                          ),
-                          label: Text(
-                            _isAnonymous
-                                ? 'سجّل دخولاً بـ Google للنشر'
-                                : 'نشر الإعلان',
-                            style: const TextStyle(
-                                fontSize: 17, fontWeight: FontWeight.bold),
-                          ),
+                          icon: const Icon(Icons.campaign_rounded, size: 22),
+                          label: const Text('نشر الإعلان',
+                              style: TextStyle(
+                                  fontSize: 17, fontWeight: FontWeight.bold)),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: _isAnonymous
-                                ? const Color(0xFF78350F)
-                                : const Color(0xFFE91E8C),
+                            backgroundColor: const Color(0xFFE91E8C),
                             foregroundColor: Colors.white,
                             minimumSize: const Size(double.infinity, 56),
                             shape: RoundedRectangleBorder(
@@ -425,6 +402,151 @@ class _AdScreenState extends State<AdScreen> {
             ),
     );
   }
+}
+
+// ─── Google Login Bottom Sheet ────────────────────────────────────────────────
+
+class _GoogleLoginSheet extends StatefulWidget {
+  const _GoogleLoginSheet();
+  @override
+  State<_GoogleLoginSheet> createState() => _GoogleLoginSheetState();
+}
+
+class _GoogleLoginSheetState extends State<_GoogleLoginSheet> {
+  bool _loading = false;
+
+  Future<void> _signIn() async {
+    setState(() => _loading = true);
+    try {
+      UserCredential result;
+      if (kIsWeb) {
+        result = await FirebaseAuth.instance
+            .signInWithPopup(GoogleAuthProvider());
+      } else {
+        final gsi = GoogleSignIn();
+        await gsi.signOut();
+        final g = await gsi.signIn();
+        if (g == null) { if (mounted) setState(() => _loading = false); return; }
+        final auth = await g.authentication;
+        final cred = GoogleAuthProvider.credential(
+          accessToken: auth.accessToken,
+          idToken: auth.idToken,
+        );
+        result = await FirebaseAuth.instance.signInWithCredential(cred);
+      }
+      await FirebaseService().registerDevice(result.user!.uid);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red));
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+          24, 20, 24, MediaQuery.of(context).viewInsets.bottom + 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 40, height: 4,
+            decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2)),
+          ),
+          const SizedBox(height: 20),
+          const Icon(Icons.campaign_rounded,
+              size: 48, color: Color(0xFFE91E8C)),
+          const SizedBox(height: 12),
+          const Text(
+            'لنشر إعلانك',
+            style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF3D0030)),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'سجّل دخولاً بـ Google مرة واحدة ثم انشر إعلانك',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Color(0xFFBB8899), fontSize: 14),
+          ),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            height: 54,
+            child: ElevatedButton(
+              onPressed: _loading ? null : _signIn,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.black87,
+                side: const BorderSide(color: Color(0xFFDDDDDD)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+                elevation: 1,
+              ),
+              child: _loading
+                  ? const SizedBox(
+                      width: 22, height: 22,
+                      child: CircularProgressIndicator(
+                          color: Color(0xFFE91E8C), strokeWidth: 2.5))
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 24, height: 24,
+                          child: CustomPaint(painter: _GoogleG()),
+                        ),
+                        const SizedBox(width: 12),
+                        const Text('متابعة مع Google',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GoogleG extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2, cy = size.height / 2;
+    final r = size.width * 0.42, sw = size.width * 0.19;
+    final p = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = sw
+      ..strokeCap = StrokeCap.round;
+    p.color = const Color(0xFF4285F4);
+    canvas.drawArc(Rect.fromCircle(center: Offset(cx, cy), radius: r),
+        -math.pi * 0.42, math.pi * 0.65, false, p);
+    p.color = const Color(0xFFEA4335);
+    canvas.drawArc(Rect.fromCircle(center: Offset(cx, cy), radius: r),
+        math.pi * 0.23, math.pi * 0.72, false, p);
+    p.color = const Color(0xFFFBBC05);
+    canvas.drawArc(Rect.fromCircle(center: Offset(cx, cy), radius: r),
+        math.pi * 0.95, math.pi * 0.28, false, p);
+    p.color = const Color(0xFF34A853);
+    canvas.drawArc(Rect.fromCircle(center: Offset(cx, cy), radius: r),
+        -math.pi * 0.14, math.pi * 0.37, false, p);
+    p.color = const Color(0xFF4285F4);
+    p.strokeWidth = sw * 0.85;
+    canvas.drawLine(Offset(cx, cy), Offset(cx + r, cy), p);
+  }
+  @override
+  bool shouldRepaint(covariant CustomPainter _) => false;
 }
 
 class _SectionCard extends StatelessWidget {
@@ -457,7 +579,7 @@ class _SectionCard extends StatelessWidget {
 }
 
 class _PhotoSlot extends StatelessWidget {
-  final File? localFile;
+  final XFile? localFile;
   final String existingUrl;
   final VoidCallback onPick;
   final VoidCallback onRemove;
@@ -493,13 +615,16 @@ class _PhotoSlot extends StatelessWidget {
                 borderRadius: BorderRadius.circular(13),
                 child: hasPhoto
                     ? (localFile != null
-                        ? Image.file(localFile!,
-                            fit: BoxFit.cover, width: 110, height: 130)
+                        ? (kIsWeb
+                            ? Image.network(localFile!.path,
+                                fit: BoxFit.cover, width: 110, height: 130)
+                            : Image.file(File(localFile!.path),
+                                fit: BoxFit.cover, width: 110, height: 130))
                         : Image.network(existingUrl,
                             fit: BoxFit.cover,
                             width: 110,
                             height: 130,
-                            errorBuilder: (_, __, ___) => const Icon(
+                            errorBuilder: (ctx2, e2, st2) => const Icon(
                                 Icons.broken_image,
                                 color: Colors.grey)))
                     : const Column(

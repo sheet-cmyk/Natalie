@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class NotificationService {
@@ -11,7 +11,7 @@ class NotificationService {
   int _id = 0;
 
   Future<void> init() async {
-    if (_ready) return;
+    if (kIsWeb || _ready) return;
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     const settings = InitializationSettings(android: android);
     await _plugin.initialize(settings);
@@ -25,7 +25,7 @@ class NotificationService {
   }
 
   Future<void> show({required String title, required String body}) async {
-    if (!_ready) return;
+    if (kIsWeb || !_ready) return;
     const details = NotificationDetails(
       android: AndroidNotificationDetails(
         'om_natalie_ch',

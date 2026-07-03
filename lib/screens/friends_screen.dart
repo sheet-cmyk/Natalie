@@ -9,36 +9,22 @@ class FriendsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
+    return Scaffold(
+      backgroundColor: const Color(0xFFFFF0F7),
+      appBar: AppBar(
         backgroundColor: const Color(0xFFFFF0F7),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFFFFF0F7),
-          elevation: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                color: Color(0xFF3D0030)),
-            onPressed: () => Navigator.pop(context),
-          ),
-          title: const Text('الأصدقاء',
-              style: TextStyle(
-                  color: Color(0xFF3D0030), fontWeight: FontWeight.bold)),
-          centerTitle: true,
-          bottom: const TabBar(
-            labelColor: Color(0xFFE91E8C),
-            unselectedLabelColor: Color(0xFFBB8899),
-            indicatorColor: Color(0xFFE91E8C),
-            tabs: [
-              Tab(text: 'أصدقائي'),
-              Tab(text: 'الطلبات'),
-            ],
-          ),
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded,
+              color: Color(0xFF3D0030)),
+          onPressed: () => Navigator.pop(context),
         ),
-        body: const TabBarView(
-          children: [_FriendsTab(), _RequestsTab()],
-        ),
+        title: const Text('أصدقائي',
+            style: TextStyle(
+                color: Color(0xFF3D0030), fontWeight: FontWeight.bold)),
+        centerTitle: true,
       ),
+      body: const _FriendsTab(),
     );
   }
 }
@@ -275,172 +261,6 @@ class _IconBtn extends StatelessWidget {
           child: Icon(icon, color: color, size: 18),
         ),
       ),
-    );
-  }
-}
-
-// ─── Incoming Requests ────────────────────────────────────────────────────────
-
-class _RequestsTab extends StatelessWidget {
-  const _RequestsTab();
-
-  @override
-  Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return const _EmptyHint(msg: 'سجّل دخولاً أولاً');
-
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('friend_requests')
-          .where('to', isEqualTo: uid)
-          .snapshots(),
-      builder: (ctx, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(
-              child: CircularProgressIndicator(color: Color(0xFFE91E8C)));
-        }
-        final docs = snap.data?.docs ?? [];
-        if (docs.isEmpty) {
-          return const _EmptyHint(msg: 'لا طلبات صداقة جديدة');
-        }
-        return ListView.builder(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          itemCount: docs.length,
-          itemBuilder: (ctx, i) {
-            final d = docs[i].data() as Map<String, dynamic>;
-            return _RequestTile(
-              docId: docs[i].id,
-              fromUid: d['from'] as String? ?? '',
-              fromName: d['fromName'] as String? ?? 'مستخدم',
-              fromPhoto: d['fromPhoto'] as String? ?? '',
-              toUid: uid,
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
-class _RequestTile extends StatefulWidget {
-  final String docId;
-  final String fromUid;
-  final String fromName;
-  final String fromPhoto;
-  final String toUid;
-  const _RequestTile({
-    required this.docId,
-    required this.fromUid,
-    required this.fromName,
-    required this.fromPhoto,
-    required this.toUid,
-  });
-
-  @override
-  State<_RequestTile> createState() => _RequestTileState();
-}
-
-class _RequestTileState extends State<_RequestTile> {
-  bool _loading = false;
-  final _db = FirebaseFirestore.instance;
-
-  Future<void> _accept() async {
-    setState(() => _loading = true);
-    try {
-      final chatId = _makeChatId(widget.fromUid, widget.toUid);
-      final myDoc = await _db.collection('users').doc(widget.toUid).get();
-      final myName = (myDoc.data()?['name'] as String?) ?? 'مستخدم';
-      final myPhoto =
-          ((myDoc.data()?['photoUrls'] as List?)?.firstOrNull as String?) ?? '';
-
-      final batch = _db.batch();
-      batch.delete(_db.collection('friend_requests').doc(widget.docId));
-      batch.set(
-        _db.collection('friends').doc(widget.toUid).collection('list').doc(widget.fromUid),
-        {'uid': widget.fromUid, 'name': widget.fromName, 'photoUrl': widget.fromPhoto, 'chatId': chatId, 'addedAt': FieldValue.serverTimestamp()},
-      );
-      batch.set(
-        _db.collection('friends').doc(widget.fromUid).collection('list').doc(widget.toUid),
-        {'uid': widget.toUid, 'name': myName, 'photoUrl': myPhoto, 'chatId': chatId, 'addedAt': FieldValue.serverTimestamp()},
-      );
-      batch.set(_db.collection('chats').doc(chatId),
-          {'participants': [widget.fromUid, widget.toUid], 'lastMessage': '', 'lastAt': FieldValue.serverTimestamp()},
-          SetOptions(merge: true));
-      batch.set(
-        _db.collection('inbox').doc(widget.fromUid).collection('messages').doc(),
-        {'type': 'friend_accepted', 'from': widget.toUid, 'fromName': myName, 'text': '$myName قبل طلب صداقتك', 'read': false, 'createdAt': FieldValue.serverTimestamp()},
-      );
-      await batch.commit();
-      if (mounted) setState(() => _loading = false);
-    } catch (e) {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _decline() async {
-    setState(() => _loading = true);
-    try {
-      await _db.collection('friend_requests').doc(widget.docId).delete();
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: CircleAvatar(
-        radius: 26,
-        backgroundColor: const Color(0xFFFFCCE8),
-        backgroundImage: widget.fromPhoto.isNotEmpty
-            ? NetworkImage(widget.fromPhoto)
-            : null,
-        child: widget.fromPhoto.isEmpty
-            ? const Icon(Icons.person, color: Color(0xFFE91E8C))
-            : null,
-      ),
-      title: Text(widget.fromName,
-          style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF3D0030))),
-      subtitle: const Text('يريد إضافتك كصديق',
-          style: TextStyle(color: Color(0xFFBB8899), fontSize: 12)),
-      trailing: _loading
-          ? const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(
-                  color: Color(0xFFE91E8C), strokeWidth: 2))
-          : Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                GestureDetector(
-                  onTap: _accept,
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: const BoxDecoration(
-                        color: Color(0xFFE91E8C),
-                        shape: BoxShape.circle),
-                    child: const Icon(Icons.check_rounded,
-                        color: Colors.white, size: 18),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: _decline,
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                        color: Colors.grey[200],
-                        shape: BoxShape.circle),
-                    child: const Icon(Icons.close_rounded,
-                        color: Colors.black54, size: 18),
-                  ),
-                ),
-              ],
-            ),
     );
   }
 }

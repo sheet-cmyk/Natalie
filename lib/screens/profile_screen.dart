@@ -1,4 +1,5 @@
-import 'dart:io';
+import 'dart:io' show File;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -25,7 +26,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _tiktokCtrl = TextEditingController();
   final _instagramCtrl = TextEditingController();
 
-  final List<File?> _localPhotos = List.filled(5, null);
+  final List<XFile?> _localPhotos = List.filled(5, null);
   final List<String> _existingUrls = List.filled(5, '');
   bool _saving = false;
   bool _initialLoading = true;
@@ -90,7 +91,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       imageQuality: 85,
     );
     if (picked != null && mounted) {
-      setState(() => _localPhotos[index] = File(picked.path));
+      setState(() => _localPhotos[index] = picked);
     }
   }
 
@@ -573,7 +574,7 @@ class _SectionCard extends StatelessWidget {
 }
 
 class _PhotoSlot extends StatelessWidget {
-  final File? localFile;
+  final XFile? localFile;
   final String existingUrl;
   final VoidCallback onPick;
   final VoidCallback onRemove;
@@ -609,10 +610,11 @@ class _PhotoSlot extends StatelessWidget {
                 borderRadius: BorderRadius.circular(13),
                 child: hasPhoto
                     ? (localFile != null
-                        ? Image.file(localFile!,
-                            fit: BoxFit.cover,
-                            width: 110,
-                            height: 130)
+                        ? (kIsWeb
+                            ? Image.network(localFile!.path,
+                                fit: BoxFit.cover, width: 110, height: 130)
+                            : Image.file(File(localFile!.path),
+                                fit: BoxFit.cover, width: 110, height: 130))
                         : Image.network(existingUrl,
                             fit: BoxFit.cover,
                             width: 110,

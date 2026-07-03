@@ -1,9 +1,11 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:io' show Platform;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:image_picker/image_picker.dart' show XFile;
 import '../models/ad_model.dart';
 import '../models/feed_item.dart';
 import '../models/user_model.dart';
@@ -20,6 +22,7 @@ class FirebaseService {
   // ─── Device restriction ───────────────────────────────────────────────────
 
   Future<String> getDeviceId() async {
+    if (kIsWeb) return 'unknown';
     try {
       final info = DeviceInfoPlugin();
       if (Platform.isAndroid) {
@@ -88,10 +91,10 @@ class FirebaseService {
     );
   }
 
-  Future<String> uploadPhoto(String uid, File file, int index) async {
+  Future<String> uploadPhoto(String uid, XFile file, int index) async {
     final ref = _storage.ref('users/$uid/photo_$index.jpg');
-    final task = await ref.putFile(
-        file, SettableMetadata(contentType: 'image/jpeg'));
+    final bytes = await file.readAsBytes();
+    final task = await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
     return await task.ref.getDownloadURL();
   }
 
@@ -115,10 +118,10 @@ class FirebaseService {
     );
   }
 
-  Future<String> uploadAdPhoto(String uid, File file, int index) async {
+  Future<String> uploadAdPhoto(String uid, XFile file, int index) async {
     final ref = _storage.ref('ads/$uid/photo_$index.jpg');
-    final task = await ref.putFile(
-        file, SettableMetadata(contentType: 'image/jpeg'));
+    final bytes = await file.readAsBytes();
+    final task = await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
     return await task.ref.getDownloadURL();
   }
 

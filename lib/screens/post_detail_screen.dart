@@ -555,7 +555,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
 // ─── Friend Status Button ─────────────────────────────────────────────────────
 
-enum _FriendStatus { loading, none, sentRequest, receivedRequest, friends }
+enum _FriendStatus { loading, none, friends }
 
 class _FriendStatusButton extends StatefulWidget {
   final String ownerUid;
@@ -600,27 +600,8 @@ class _FriendStatusButtonState extends State<_FriendStatusButton> {
           .doc(widget.ownerUid)
           .get();
       if (!mounted) return;
-      if (fSnap.exists) {
-        setState(() => _status = _FriendStatus.friends);
-        return;
-      }
-      final sentSnap = await _db
-          .collection('friend_requests')
-          .doc('${uid}_${widget.ownerUid}')
-          .get();
-      if (!mounted) return;
-      if (sentSnap.exists) {
-        setState(() => _status = _FriendStatus.sentRequest);
-        return;
-      }
-      final recvSnap = await _db
-          .collection('friend_requests')
-          .doc('${widget.ownerUid}_$uid')
-          .get();
-      if (!mounted) return;
-      setState(() => _status = recvSnap.exists
-          ? _FriendStatus.receivedRequest
-          : _FriendStatus.none);
+      setState(() =>
+          _status = fSnap.exists ? _FriendStatus.friends : _FriendStatus.none);
     } catch (_) {
       if (mounted) setState(() => _status = _FriendStatus.none);
     }
@@ -635,50 +616,6 @@ class _FriendStatusButtonState extends State<_FriendStatusButton> {
     setState(() => _busy = true);
     try {
       final uid = _myUid!;
-      final myDoc = await _db.collection('users').doc(uid).get();
-      final myName = (myDoc.data()?['name'] as String?) ?? 'مستخدم';
-      final myPhoto =
-          ((myDoc.data()?['photoUrls'] as List?)?.firstOrNull as String?) ?? '';
-
-      await _db
-          .collection('friend_requests')
-          .doc('${uid}_${widget.ownerUid}')
-          .set({
-        'from': uid,
-        'to': widget.ownerUid,
-        'fromName': myName,
-        'fromPhoto': myPhoto,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      await _db
-          .collection('inbox')
-          .doc(widget.ownerUid)
-          .collection('messages')
-          .add({
-        'type': 'friend_request',
-        'from': uid,
-        'fromName': myName,
-        'fromPhoto': myPhoto,
-        'text': '$myName أرسل لك طلب صداقة',
-        'read': false,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      if (mounted) setState(() { _busy = false; _status = _FriendStatus.sentRequest; });
-    } catch (e) {
-      if (mounted) {
-        setState(() => _busy = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('خطأ: $e'), backgroundColor: const Color(0xFF7F1D1D)));
-      }
-    }
-  }
-
-  Future<void> _acceptFriend() async {
-    setState(() => _busy = true);
-    try {
-      final uid = _myUid!;
       final chatId = _chatId();
 
       final myDoc = await _db.collection('users').doc(uid).get();
@@ -687,23 +624,56 @@ class _FriendStatusButtonState extends State<_FriendStatusButton> {
           ((myDoc.data()?['photoUrls'] as List?)?.firstOrNull as String?) ?? '';
 
       final batch = _db.batch();
-      batch.delete(
-          _db.collection('friend_requests').doc('${widget.ownerUid}_$uid'));
+
+      // أضفني إلى قائمة صديق صاحب الملف
       batch.set(
         _db.collection('friends').doc(uid).collection('list').doc(widget.ownerUid),
-        {'uid': widget.ownerUid, 'name': widget.ownerName, 'photoUrl': widget.ownerPhoto, 'chatId': chatId, 'addedAt': FieldValue.serverTimestamp()},
+        {
+          'uid': widget.ownerUid,
+          'name': widget.ownerName,
+          'photoUrl': widget.ownerPhoto,
+          'chatId': chatId,
+          'addedAt': FieldValue.serverTimestamp(),
+        },
       );
+
+      // أضفه إلى قائمة أصدقائي
       batch.set(
         _db.collection('friends').doc(widget.ownerUid).collection('list').doc(uid),
-        {'uid': uid, 'name': myName, 'photoUrl': myPhoto, 'chatId': chatId, 'addedAt': FieldValue.serverTimestamp()},
+        {
+          'uid': uid,
+          'name': myName,
+          'photoUrl': myPhoto,
+          'chatId': chatId,
+          'addedAt': FieldValue.serverTimestamp(),
+        },
       );
-      batch.set(_db.collection('chats').doc(chatId),
-          {'participants': [uid, widget.ownerUid], 'lastMessage': '', 'lastAt': FieldValue.serverTimestamp()},
-          SetOptions(merge: true));
+
+      // أنشئ/احتفظ بمحادثة مشتركة
+      batch.set(
+        _db.collection('chats').doc(chatId),
+        {
+          'participants': [uid, widget.ownerUid],
+          'lastMessage': '',
+          'lastAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      // أرسل إشعاراً للمضاف
       batch.set(
         _db.collection('inbox').doc(widget.ownerUid).collection('messages').doc(),
-        {'type': 'friend_accepted', 'from': uid, 'fromName': myName, 'text': '$myName قبل طلب صداقتك', 'read': false, 'createdAt': FieldValue.serverTimestamp()},
+        {
+          'type': 'friend_added',
+          'from': uid,
+          'fromName': myName,
+          'fromPhoto': myPhoto,
+          'text': '$myName أضافك كصديق',
+          'read': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        },
       );
+
       await batch.commit();
       if (mounted) setState(() { _busy = false; _status = _FriendStatus.friends; });
     } catch (e) {
@@ -849,35 +819,13 @@ class _FriendStatusButtonState extends State<_FriendStatusButton> {
       );
     }
 
-    final IconData icon;
-    final String label;
-    final Color color;
-    final VoidCallback? onTap;
-
-    switch (_status) {
-      case _FriendStatus.none:
-        icon = Icons.person_add_rounded;
-        label = 'إضافة صديق';
-        color = const Color(0xFFE91E8C);
-        onTap = _busy ? null : _addFriend;
-      case _FriendStatus.sentRequest:
-        icon = Icons.check_rounded;
-        label = 'تم إرسال طلب الصداقة';
-        color = Colors.grey;
-        onTap = null;
-      case _FriendStatus.receivedRequest:
-        icon = Icons.how_to_reg_rounded;
-        label = 'قبول طلب الصداقة';
-        color = const Color(0xFF7C3AED);
-        onTap = _busy ? null : _acceptFriend;
-      case _FriendStatus.friends:
-        icon = Icons.person_remove_rounded;
-        label = 'إزالة الصداقة';
-        color = Colors.red;
-        onTap = _busy ? null : _removeFriend;
-      default:
-        return const SizedBox.shrink();
-    }
+    final bool isFriend = _status == _FriendStatus.friends;
+    final IconData icon =
+        isFriend ? Icons.person_remove_rounded : Icons.person_add_rounded;
+    final String label = isFriend ? 'إزالة الصداقة' : 'إضافة صديق';
+    final Color color = isFriend ? Colors.red : const Color(0xFFE91E8C);
+    final VoidCallback? onTap =
+        _busy ? null : (isFriend ? _removeFriend : _addFriend);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),

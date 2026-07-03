@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -354,12 +353,12 @@ class AdEditSheetState extends State<AdEditSheet> {
     if (picked == null || !mounted) return;
     setState(() => _photoLoading = true);
     try {
-      final file = File(picked.path);
       final ts = DateTime.now().millisecondsSinceEpoch;
       final ref = FirebaseStorage.instance
           .ref('${widget.collection}/${widget.ad.uid}/photo_$ts.jpg');
-      final task = await ref.putFile(
-          file, SettableMetadata(contentType: 'image/jpeg'));
+      final bytes = await picked.readAsBytes();
+      final task = await ref.putData(
+          bytes, SettableMetadata(contentType: 'image/jpeg'));
       final url = await task.ref.getDownloadURL();
       if (mounted) setState(() => _photos.add(url));
     } catch (e) {
@@ -739,10 +738,13 @@ class _SocialLinksTab extends StatefulWidget {
 }
 
 class _SocialLinksTabState extends State<_SocialLinksTab> {
-  final _whatsapp  = TextEditingController();
-  final _facebook  = TextEditingController();
-  final _tiktok    = TextEditingController();
-  final _instagram = TextEditingController();
+  final _whatsapp      = TextEditingController();
+  final _facebook      = TextEditingController();
+  final _tiktok        = TextEditingController();
+  final _instagram     = TextEditingController();
+  final _snapchat      = TextEditingController();
+  final _gift          = TextEditingController();
+  final _subscription  = TextEditingController();
   bool _loaded = false;
   bool _saving = false;
 
@@ -758,20 +760,26 @@ class _SocialLinksTabState extends State<_SocialLinksTab> {
   Future<void> _load() async {
     final snap = await _doc.get();
     final data = snap.data() ?? {};
-    _whatsapp.text  = data['whatsapp']  ?? '';
-    _facebook.text  = data['facebook']  ?? '';
-    _tiktok.text    = data['tiktok']    ?? '';
-    _instagram.text = data['instagram'] ?? '';
+    _whatsapp.text     = data['whatsapp']      ?? '';
+    _facebook.text     = data['facebook']      ?? '';
+    _tiktok.text       = data['tiktok']        ?? '';
+    _instagram.text    = data['instagram']     ?? '';
+    _snapchat.text     = data['snapchat']      ?? '';
+    _gift.text         = data['gift']          ?? '';
+    _subscription.text = data['subscription']  ?? '';
     setState(() => _loaded = true);
   }
 
   Future<void> _save() async {
     setState(() => _saving = true);
     await _doc.set({
-      'whatsapp' : _whatsapp.text.trim(),
-      'facebook' : _facebook.text.trim(),
-      'tiktok'   : _tiktok.text.trim(),
-      'instagram': _instagram.text.trim(),
+      'whatsapp'     : _whatsapp.text.trim(),
+      'facebook'     : _facebook.text.trim(),
+      'tiktok'       : _tiktok.text.trim(),
+      'instagram'    : _instagram.text.trim(),
+      'snapchat'     : _snapchat.text.trim(),
+      'gift'         : _gift.text.trim(),
+      'subscription' : _subscription.text.trim(),
     });
     setState(() => _saving = false);
     if (mounted) {
@@ -789,6 +797,9 @@ class _SocialLinksTabState extends State<_SocialLinksTab> {
     _facebook.dispose();
     _tiktok.dispose();
     _instagram.dispose();
+    _snapchat.dispose();
+    _gift.dispose();
+    _subscription.dispose();
     super.dispose();
   }
 
@@ -839,6 +850,36 @@ class _SocialLinksTabState extends State<_SocialLinksTab> {
             hint: 'مثال: https://instagram.com/user',
             icon: Icons.camera_alt_rounded,
             color: const Color(0xFFE1306C),
+          ),
+          const SizedBox(height: 20),
+          const Divider(),
+          const SizedBox(height: 8),
+          const Text('أزرار الإجراءات',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                  color: Color(0xFF3D0030))),
+          const SizedBox(height: 16),
+          _SocialField(
+            ctrl: _snapchat,
+            label: 'رابط سناب شات',
+            hint: 'مثال: https://snapchat.com/add/username',
+            icon: Icons.camera_enhance_rounded,
+            color: const Color(0xFFD4A017),
+          ),
+          _SocialField(
+            ctrl: _gift,
+            label: 'رابط الهداية',
+            hint: 'مثال: https://...',
+            icon: Icons.card_giftcard_rounded,
+            color: const Color(0xFFE91E8C),
+          ),
+          _SocialField(
+            ctrl: _subscription,
+            label: 'رابط الاشتراك',
+            hint: 'مثال: https://...',
+            icon: Icons.stars_rounded,
+            color: const Color(0xFF7C3AED),
           ),
           const SizedBox(height: 24),
           ElevatedButton.icon(

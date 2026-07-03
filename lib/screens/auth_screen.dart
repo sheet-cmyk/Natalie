@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -117,20 +118,27 @@ class _AuthScreenState extends State<AuthScreen>
       _which = 'google';
     });
     try {
-      // signOut أولاً لإجبار Google على عرض قائمة اختيار الحساب
-      final gsi = GoogleSignIn();
-      await gsi.signOut();
-      final g = await gsi.signIn();
-      if (g == null) {
-        if (mounted) setState(() => _loading = false);
-        return;
+      UserCredential result;
+      if (kIsWeb) {
+        // الويب: popup مباشر من Firebase Auth
+        result = await FirebaseAuth.instance
+            .signInWithPopup(GoogleAuthProvider());
+      } else {
+        // الموبايل: google_sign_in
+        final gsi = GoogleSignIn();
+        await gsi.signOut();
+        final g = await gsi.signIn();
+        if (g == null) {
+          if (mounted) setState(() => _loading = false);
+          return;
+        }
+        final auth = await gsi.currentUser!.authentication;
+        final cred = GoogleAuthProvider.credential(
+          accessToken: auth.accessToken,
+          idToken: auth.idToken,
+        );
+        result = await FirebaseAuth.instance.signInWithCredential(cred);
       }
-      final auth = await gsi.currentUser!.authentication;
-      final cred = GoogleAuthProvider.credential(
-        accessToken: auth.accessToken,
-        idToken: auth.idToken,
-      );
-      final result = await FirebaseAuth.instance.signInWithCredential(cred);
       final user = result.user!;
 
       final blocked = await FirebaseService().isDeviceBlockedForUser(user.uid);

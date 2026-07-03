@@ -271,6 +271,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
+            // ── Action buttons (هداية / اشتراك / اسناب) ─────────────
+            const SliverToBoxAdapter(child: _ActionBar()),
+
             // ── Social links ─────────────────────────────────────────
             const SliverToBoxAdapter(child: _SocialBar()),
 
@@ -923,6 +926,118 @@ class _BottomNavBtn extends StatelessWidget {
                     color: Color(0xFFE91E8C),
                     fontSize: 9,
                     fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Action Bar (هداية / اشتراك / اسناب) ────────────────────────────────────
+
+class _ActionBar extends StatelessWidget {
+  const _ActionBar();
+
+  static Future<void> _open(BuildContext ctx, String url) async {
+    if (url.isEmpty) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+          const SnackBar(content: Text('لم يُضف الرابط بعد')));
+      return;
+    }
+    final uri = Uri.tryParse(url.startsWith('http') ? url : 'https://$url');
+    if (uri == null) return;
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalNonBrowserApplication);
+    } catch (_) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('config')
+          .doc('social_links')
+          .snapshots(),
+      builder: (ctx, snap) {
+        final data = snap.data?.data() as Map<String, dynamic>? ?? {};
+        final giftUrl     = (data['gift']         as String? ?? '').trim();
+        final subUrl      = (data['subscription'] as String? ?? '').trim();
+        final snapchatUrl = (data['snapchat']     as String? ?? '').trim();
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: _ActionBtn(
+                  label: 'هداية',
+                  icon: Icons.card_giftcard_rounded,
+                  color: const Color(0xFFE91E8C),
+                  onTap: () => _open(ctx, giftUrl),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _ActionBtn(
+                  label: 'اشتراك',
+                  icon: Icons.stars_rounded,
+                  color: const Color(0xFF7C3AED),
+                  onTap: () => _open(ctx, subUrl),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _ActionBtn(
+                  label: 'سناب',
+                  icon: Icons.camera_enhance_rounded,
+                  color: const Color(0xFFD4A017),
+                  onTap: () => _open(ctx, snapchatUrl),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ActionBtn extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+  const _ActionBtn(
+      {required this.label,
+      required this.icon,
+      required this.color,
+      required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 11),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.09),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withValues(alpha: 0.40), width: 1.3),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 26),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700),
+            ),
           ],
         ),
       ),

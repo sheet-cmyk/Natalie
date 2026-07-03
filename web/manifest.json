@@ -1,11 +1,11 @@
 {
-    "name": "om_natalie",
-    "short_name": "om_natalie",
+    "name": "OM Natalie",
+    "short_name": "OM Natalie",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#1A0012",
+    "theme_color": "#E91E8C",
+    "description": "OM Natalie - تطبيق التواصل الاجتماعي",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
