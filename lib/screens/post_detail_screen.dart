@@ -772,83 +772,83 @@ class _FriendStatusButtonState extends State<_FriendStatusButton> {
 
   @override
   Widget build(BuildContext context) {
-    if (_status == _FriendStatus.loading) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
-        child: Center(
-            child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                    color: Color(0xFFE91E8C), strokeWidth: 2))),
-      );
-    }
-    if (_myUid == null || _isAnon || _myUid == widget.ownerUid) {
+    // لا تظهر على ملفك الشخصي
+    if (_myUid == null || _myUid == widget.ownerUid) {
       return const SizedBox.shrink();
     }
 
-    // ── أصدقاء: زرّان جنباً إلى جنب ─────────────────────────────
-    if (_status == _FriendStatus.friends) {
+    // زائر: زر مراسلة مقفل مع رسالة
+    if (_isAnon) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-        child: Row(
-          children: [
-            Expanded(
-              flex: 3,
-              child: SizedBox(
-                height: 48,
-                child: ElevatedButton.icon(
-                  onPressed: _openChat,
-                  icon: const Icon(Icons.chat_bubble_outline_rounded,
-                      size: 18),
-                  label: const Text('مراسلة',
-                      style: TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF25D366),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                    elevation: 0,
-                  ),
-                ),
-              ),
+        child: SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: OutlinedButton.icon(
+            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text('سجّل دخولاً بـ Google للمراسلة والإضافة')),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              flex: 2,
-              child: SizedBox(
-                height: 48,
-                child: OutlinedButton.icon(
-                  onPressed: _busy ? null : _removeFriend,
-                  icon: _busy
-                      ? const SizedBox(
-                          width: 15,
-                          height: 15,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.red))
-                      : const Icon(Icons.person_remove_rounded,
-                          size: 18, color: Colors.red),
-                  label: const Text('إزالة',
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.red)),
-                  style: OutlinedButton.styleFrom(
-                    side:
-                        const BorderSide(color: Colors.red, width: 1.3),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-              ),
+            icon: const Icon(Icons.lock_outline_rounded,
+                size: 18, color: Color(0xFFBB8899)),
+            label: const Text('مراسلة',
+                style: TextStyle(fontSize: 15, color: Color(0xFFBB8899))),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: Color(0xFFFFCCE8), width: 1.3),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
             ),
-          ],
+          ),
         ),
       );
     }
 
-    // ── حالات أخرى: زر واحد ──────────────────────────────────────
+    // مستخدم مسجل: زر مراسلة مباشرة + زر صداقة ثانوي
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // ── مراسلة مباشرة (دائماً ظاهر، لا تحتاج صداقة) ─────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+          child: SizedBox(
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: _openChat,
+              icon: const Icon(Icons.chat_bubble_rounded, size: 20),
+              label: const Text('مراسلة',
+                  style: TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE91E8C),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+                elevation: 2,
+                shadowColor:
+                    const Color(0xFFE91E8C).withValues(alpha: 0.35),
+              ),
+            ),
+          ),
+        ),
+        // ── زر الصداقة ────────────────────────────────────────────
+        _buildFriendRow(),
+      ],
+    );
+  }
+
+  Widget _buildFriendRow() {
+    if (_status == _FriendStatus.loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 6),
+        child: Center(
+            child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                    color: Color(0xFFE91E8C), strokeWidth: 2))),
+      );
+    }
+
     final IconData icon;
     final String label;
     final Color color;
@@ -862,7 +862,7 @@ class _FriendStatusButtonState extends State<_FriendStatusButton> {
         onTap = _busy ? null : _addFriend;
       case _FriendStatus.sentRequest:
         icon = Icons.check_rounded;
-        label = 'تم إرسال الطلب';
+        label = 'تم إرسال طلب الصداقة';
         color = Colors.grey;
         onTap = null;
       case _FriendStatus.receivedRequest:
@@ -870,34 +870,37 @@ class _FriendStatusButtonState extends State<_FriendStatusButton> {
         label = 'قبول طلب الصداقة';
         color = const Color(0xFF7C3AED);
         onTap = _busy ? null : _acceptFriend;
+      case _FriendStatus.friends:
+        icon = Icons.person_remove_rounded;
+        label = 'إزالة الصداقة';
+        color = Colors.red;
+        onTap = _busy ? null : _removeFriend;
       default:
         return const SizedBox.shrink();
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
       child: SizedBox(
-        width: double.infinity,
-        height: 48,
-        child: ElevatedButton.icon(
+        height: 42,
+        child: OutlinedButton.icon(
           onPressed: onTap,
           icon: _busy
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
+              ? SizedBox(
+                  width: 14,
+                  height: 14,
                   child: CircularProgressIndicator(
-                      color: Colors.white, strokeWidth: 2))
-              : Icon(icon, size: 20),
+                      strokeWidth: 2, color: color))
+              : Icon(icon, size: 16, color: color),
           label: Text(label,
-              style: const TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.bold)),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: color,
-            foregroundColor: Colors.white,
-            disabledBackgroundColor: color.withValues(alpha: 0.6),
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: color)),
+          style: OutlinedButton.styleFrom(
+            side: BorderSide(color: color, width: 1.2),
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14)),
-            elevation: 0,
           ),
         ),
       ),
