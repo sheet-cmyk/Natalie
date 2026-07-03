@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/user_model.dart';
 import '../services/firebase_service.dart';
+import 'admin_screen.dart';
 import 'auth_screen.dart';
 import 'home_screen.dart';
 
@@ -30,7 +31,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final List<String> _existingUrls = List.filled(5, '');
   bool _saving = false;
   bool _initialLoading = true;
-  bool _isAnonymous = false;
 
   @override
   void initState() {
@@ -56,7 +56,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() => _initialLoading = false);
       return;
     }
-    _isAnonymous = authUser.isAnonymous;
     try {
       final user = await FirebaseService().getUser(authUser.uid);
       if (mounted) {
@@ -73,9 +72,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               _existingUrls[i] = user.photoUrls[i];
             }
           });
-        } else if (authUser.displayName != null && authUser.displayName!.isNotEmpty) {
-          // Pre-fill name from Google account for new users
-          setState(() => _nameCtrl.text = authUser.displayName!);
         }
       }
     } finally {
@@ -103,17 +99,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _save() async {
-    if (_isAnonymous) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('الزوار لا يمكنهم النشر — سجّل دخولاً بـ Google أولاً'),
-          backgroundColor: Color(0xFFB45309),
-          duration: Duration(seconds: 3),
-        ),
-      );
-      return;
-    }
-
     if (!_formKey.currentState!.validate()) return;
 
     final hasPhoto = _localPhotos.any((f) => f != null) ||
@@ -218,14 +203,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _deleteAccount() async {
-    // تأكيد أول
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('حذف الحساب', style: TextStyle(color: Colors.red)),
-        content: const Text(
-          'سيتم حذف حسابك وجميع بياناتك نهائياً.\nهذا الإجراء لا يمكن التراجع عنه.',
-        ),
+        content: const Text('سيتم حذف حسابك وجميع بياناتك نهائياً.\nهذا الإجراء لا يمكن التراجع عنه.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
           TextButton(
@@ -237,7 +219,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
     if (ok != true || !mounted) return;
 
-    // تأكيد ثانٍ
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -260,14 +241,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final user = FirebaseAuth.instance.currentUser!;
       final uid = user.uid;
       final db = FirebaseFirestore.instance;
-
-      // حذف البيانات من Firestore
       await db.collection('users').doc(uid).delete();
       await db.collection('ads').doc(uid).delete();
-
-      // حذف حساب Firebase Auth
       await user.delete();
-
       if (mounted) {
         Navigator.pushAndRemoveUntil(
           context,
@@ -280,12 +256,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('فشل الحذف: $e\nسجّل خروجاً ودخولاً ثم أعد المحاولة'),
+            content: Text('فشل الحذف: $e'),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 5),
           ),
         );
       }
+    }
+  }
+
+  // ─── Admin Login ──────────────────────────────────────────────────────────────
+
+  Future<void> _showAdminLogin() async {
+    final pinCtrl = TextEditingController();
+
+    final success = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _AdminPinDialog(pinCtrl: pinCtrl),
+    );
+
+    pinCtrl.dispose();
+
+    if (success == true && mounted) {
+      // pop back to HomeScreen — it re-evaluates isAdminUser() on rebuild
+      Navigator.pop(context);
     }
   }
 
@@ -317,6 +312,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         backgroundColor: const Color(0xFFE91E8C),
         foregroundColor: Colors.white,
         actions: [
+          // زر الأدمن المخفي
+          IconButton(
+            icon: const Icon(Icons.admin_panel_settings_outlined,
+                color: Colors.white54, size: 20),
+            tooltip: '',
+            onPressed: _showAdminLogin,
+          ),
           TextButton(
             onPressed: _saving ? null : _save,
             child: const Text('حفظ',
@@ -339,33 +341,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
             )
-          : Column(
-              children: [
-                if (_isAnonymous)
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    color: const Color(0xFFB45309),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.lock_outline_rounded,
-                            color: Colors.white, size: 18),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'أنت زائر — لا يمكنك النشر. سجّل دخولاً بـ Google للنشر.',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                Expanded(
-                  child: Form(
+          : Form(
               key: _formKey,
               child: ListView(
                 padding: const EdgeInsets.all(16),
@@ -406,8 +382,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           controller: _ageCtrl,
                           keyboardType: TextInputType.number,
                           textAlign: TextAlign.right,
-                          decoration:
-                              _inputDeco('العمر', Icons.cake_outlined),
+                          decoration: _inputDeco('العمر', Icons.cake_outlined),
                           validator: (v) {
                             if (v == null || v.isEmpty) return 'العمر مطلوب';
                             final n = int.tryParse(v);
@@ -423,8 +398,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           maxLines: 4,
                           maxLength: 200,
                           textAlign: TextAlign.right,
-                          decoration: _inputDeco(
-                              'نبذة عن نفسك', Icons.info_outline),
+                          decoration:
+                              _inputDeco('نبذة عن نفسك', Icons.info_outline),
                           validator: (v) =>
                               v == null || v.isEmpty ? 'النبذة مطلوبة' : null,
                         ),
@@ -442,24 +417,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           controller: _whatsappCtrl,
                           keyboardType: TextInputType.phone,
                           textDirection: TextDirection.ltr,
-                          decoration: _inputDeco(
-                              'واتساب', Icons.phone,
+                          decoration: _inputDeco('واتساب', Icons.phone,
                               hint: '+964xxxxxxxxx'),
                         ),
                         const SizedBox(height: 14),
                         TextFormField(
                           controller: _facebookCtrl,
                           textDirection: TextDirection.ltr,
-                          decoration: _inputDeco(
-                              'فيسبوك', Icons.facebook,
+                          decoration: _inputDeco('فيسبوك', Icons.facebook,
                               hint: 'facebook.com/...'),
                         ),
                         const SizedBox(height: 14),
                         TextFormField(
                           controller: _tiktokCtrl,
                           textDirection: TextDirection.ltr,
-                          decoration: _inputDeco(
-                              'تيك توك', Icons.music_note,
+                          decoration: _inputDeco('تيك توك', Icons.music_note,
                               hint: '@username'),
                         ),
                         const SizedBox(height: 14),
@@ -477,23 +449,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                   ElevatedButton.icon(
                     onPressed: _saving ? null : _save,
-                    icon: Icon(
-                      _isAnonymous
-                          ? Icons.lock_outline_rounded
-                          : Icons.save_rounded,
-                      size: 22,
-                    ),
-                    label: Text(
-                      _isAnonymous
-                          ? 'سجّل دخولاً بـ Google للنشر'
-                          : 'حفظ الملف الشخصي',
-                      style: const TextStyle(
-                          fontSize: 17, fontWeight: FontWeight.bold),
-                    ),
+                    icon: const Icon(Icons.save_rounded, size: 22),
+                    label: const Text('حفظ الملف الشخصي',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: _isAnonymous
-                          ? const Color(0xFF78350F)
-                          : const Color(0xFFE91E8C),
+                      backgroundColor: const Color(0xFFE91E8C),
                       foregroundColor: Colors.white,
                       minimumSize: const Size(double.infinity, 56),
                       shape: RoundedRectangleBorder(
@@ -503,32 +463,37 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // ── تسجيل الخروج ──
-                  if (!_isAnonymous)
-                    OutlinedButton.icon(
-                      onPressed: _logout,
-                      icon: const Icon(Icons.logout_rounded, color: Colors.orange),
-                      label: const Text('تسجيل الخروج',
-                          style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 15)),
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 50),
-                        side: const BorderSide(color: Colors.orange, width: 1.5),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      ),
+                  OutlinedButton.icon(
+                    onPressed: _logout,
+                    icon: const Icon(Icons.logout_rounded, color: Colors.orange),
+                    label: const Text('تسجيل الخروج',
+                        style: TextStyle(
+                            color: Colors.orange,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15)),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 50),
+                      side: const BorderSide(color: Colors.orange, width: 1.5),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
                     ),
+                  ),
+                  const SizedBox(height: 12),
 
-                  if (!_isAnonymous) const SizedBox(height: 12),
-
-                  // ── حذف الحساب ──
                   OutlinedButton.icon(
                     onPressed: _deleteAccount,
-                    icon: const Icon(Icons.delete_forever_rounded, color: Colors.red),
+                    icon: const Icon(Icons.delete_forever_rounded,
+                        color: Colors.red),
                     label: const Text('حذف الحساب نهائياً',
-                        style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 15)),
+                        style: TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15)),
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 50),
                       side: const BorderSide(color: Colors.red, width: 1.5),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
                     ),
                   ),
 
@@ -536,12 +501,131 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
             ),
-                ),
-              ],
-            ),
     );
   }
 }
+
+// ─── Admin PIN Dialog ─────────────────────────────────────────────────────────
+
+class _AdminPinDialog extends StatefulWidget {
+  final TextEditingController pinCtrl;
+  const _AdminPinDialog({required this.pinCtrl});
+
+  @override
+  State<_AdminPinDialog> createState() => _AdminPinDialogState();
+}
+
+class _AdminPinDialogState extends State<_AdminPinDialog> {
+  bool _loading = false;
+  String? _error;
+
+  Future<void> _submit() async {
+    final pin = widget.pinCtrl.text.trim();
+    if (pin.isEmpty) {
+      setState(() => _error = 'أدخل الرقم السري');
+      return;
+    }
+    setState(() { _loading = true; _error = null; });
+    try {
+      try {
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+            email: kAdminEmail, password: pin);
+      } on FirebaseAuthException catch (e) {
+        if (e.code == 'user-not-found') {
+          await FirebaseAuth.instance.createUserWithEmailAndPassword(
+              email: kAdminEmail, password: pin);
+        } else {
+          rethrow;
+        }
+      }
+      if (!isAdminUser()) {
+        await FirebaseAuth.instance.signOut();
+        setState(() { _loading = false; _error = 'الرقم السري غير صحيح'; });
+        return;
+      }
+      if (mounted) Navigator.pop(context, true);
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = (e.code == 'wrong-password' || e.code == 'invalid-credential')
+            ? 'الرقم السري غير صحيح'
+            : (e.message ?? 'خطأ غير معروف');
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _loading = false; _error = e.toString(); });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Row(
+        children: [
+          Icon(Icons.admin_panel_settings_rounded, color: Color(0xFFE91E8C)),
+          SizedBox(width: 8),
+          Text('دخول الأدمن',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: widget.pinCtrl,
+            obscureText: true,
+            textDirection: TextDirection.ltr,
+            autofocus: true,
+            onSubmitted: (_) => _submit(),
+            decoration: InputDecoration(
+              labelText: 'الرقم السري',
+              prefixIcon:
+                  const Icon(Icons.lock_outline, color: Color(0xFFE91E8C)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide:
+                    const BorderSide(color: Color(0xFFE91E8C), width: 2),
+              ),
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!,
+                style: const TextStyle(color: Colors.red, fontSize: 12)),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _loading ? null : () => Navigator.pop(context, false),
+          child: const Text('إلغاء'),
+        ),
+        ElevatedButton(
+          onPressed: _loading ? null : _submit,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFFE91E8C),
+            foregroundColor: Colors.white,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          child: _loading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                      color: Colors.white, strokeWidth: 2))
+              : const Text('دخول'),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _SectionCard extends StatelessWidget {
   final String title;
@@ -603,8 +687,8 @@ class _PhotoSlot extends StatelessWidget {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(14),
                 color: Colors.grey[200],
-                border: Border.all(
-                    color: const Color(0xFFE91E8C), width: 1.5),
+                border:
+                    Border.all(color: const Color(0xFFE91E8C), width: 1.5),
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(13),
@@ -619,7 +703,7 @@ class _PhotoSlot extends StatelessWidget {
                             fit: BoxFit.cover,
                             width: 110,
                             height: 130,
-                            errorBuilder: (_, _, _) => const Icon(
+                            errorBuilder: (ctx2, e2, st2) => const Icon(
                                 Icons.broken_image,
                                 color: Colors.grey)))
                     : const Column(
@@ -629,8 +713,8 @@ class _PhotoSlot extends StatelessWidget {
                               size: 36, color: Color(0xFFE91E8C)),
                           SizedBox(height: 6),
                           Text('إضافة صورة',
-                              style: TextStyle(
-                                  fontSize: 11, color: Colors.grey)),
+                              style:
+                                  TextStyle(fontSize: 11, color: Colors.grey)),
                         ],
                       ),
               ),

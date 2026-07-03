@@ -8,11 +8,16 @@ import '../models/user_model.dart';
 import 'post_detail_screen.dart';
 
 const String kAdminEmail = 'hussein1sheet@gmail.com';
-const String kAdminUid   = 'zO8KCjQ9iYXTBg7xe7Ru3ZPL7yF3';
+const List<String> kAdminUids = [
+  'zO8KCjQ9iYXTBg7xe7Ru3ZPL7yF3',
+  '7LYJJ9FR6eU5YYVxWOdn7Ok2p4t1',
+  'QTzvO5yuV7aZ24PC0qHUEyIxrVv2',
+  '7KyzgxPXNDXftSLxSLzSNNLJwAS2',
+];
 
 bool isAdminUser() {
   final user = FirebaseAuth.instance.currentUser;
-  return user?.email == kAdminEmail || user?.uid == kAdminUid;
+  return user?.email == kAdminEmail || kAdminUids.contains(user?.uid);
 }
 
 // ─── Admin Screen ─────────────────────────────────────────────────────────────
@@ -772,22 +777,33 @@ class _SocialLinksTabState extends State<_SocialLinksTab> {
 
   Future<void> _save() async {
     setState(() => _saving = true);
-    await _doc.set({
-      'whatsapp'     : _whatsapp.text.trim(),
-      'facebook'     : _facebook.text.trim(),
-      'tiktok'       : _tiktok.text.trim(),
-      'instagram'    : _instagram.text.trim(),
-      'snapchat'     : _snapchat.text.trim(),
-      'gift'         : _gift.text.trim(),
-      'subscription' : _subscription.text.trim(),
-    });
-    setState(() => _saving = false);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('تم حفظ الروابط بنجاح ✓'),
-            backgroundColor: Color(0xFF25D366)),
-      );
+    try {
+      await _doc.set({
+        'whatsapp'     : _whatsapp.text.trim(),
+        'facebook'     : _facebook.text.trim(),
+        'tiktok'       : _tiktok.text.trim(),
+        'instagram'    : _instagram.text.trim(),
+        'snapchat'     : _snapchat.text.trim(),
+        'gift'         : _gift.text.trim(),
+        'subscription' : _subscription.text.trim(),
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('تم حفظ الروابط بنجاح ✓'),
+              backgroundColor: Color(0xFF25D366)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('خطأ في الحفظ: $e'),
+              backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -862,10 +878,10 @@ class _SocialLinksTabState extends State<_SocialLinksTab> {
           const SizedBox(height: 16),
           _SocialField(
             ctrl: _snapchat,
-            label: 'رابط سناب شات',
-            hint: 'مثال: https://snapchat.com/add/username',
-            icon: Icons.camera_enhance_rounded,
-            color: const Color(0xFFD4A017),
+            label: 'رابط مجموعة وتياب 🇺🇸',
+            hint: 'مثال: https://chat.whatsapp.com/...',
+            icon: Icons.chat_rounded,
+            color: const Color(0xFF25D366),
           ),
           _SocialField(
             ctrl: _gift,

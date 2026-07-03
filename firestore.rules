@@ -5,7 +5,12 @@ service cloud.firestore {
     function isAdmin() {
       return request.auth != null && (
         request.auth.token.email == 'hussein1sheet@gmail.com' ||
-        request.auth.uid == 'zO8KCjQ9iYXTBg7xe7Ru3ZPL7yF3'
+        request.auth.uid in [
+          'zO8KCjQ9iYXTBg7xe7Ru3ZPL7yF3',
+          '7LYJJ9FR6eU5YYVxWOdn7Ok2p4t1',
+          'QTzvO5yuV7aZ24PC0qHUEyIxrVv2',
+          '7KyzgxPXNDXftSLxSLzSNNLJwAS2'
+        ]
       );
     }
 

@@ -1,9 +1,7 @@
 import 'dart:io' show File;
-import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/ad_model.dart';
 import '../services/firebase_service.dart';
@@ -30,7 +28,6 @@ class _AdScreenState extends State<AdScreen> {
   final List<String> _existingUrls = List.filled(5, '');
   bool _saving = false;
   bool _initialLoading = true;
-  bool _isAnonymous = false;
 
   @override
   void initState() {
@@ -56,9 +53,7 @@ class _AdScreenState extends State<AdScreen> {
       setState(() => _initialLoading = false);
       return;
     }
-    _isAnonymous = authUser.isAnonymous;
     try {
-      // Try existing ad first
       final ad = await FirebaseService().getAd(authUser.uid);
       if (mounted && ad != null) {
         setState(() {
@@ -75,7 +70,6 @@ class _AdScreenState extends State<AdScreen> {
         });
         return;
       }
-      // No ad yet — pre-fill from profile
       final profile = await FirebaseService().getUser(authUser.uid);
       if (mounted && profile != null) {
         setState(() {
@@ -119,26 +113,8 @@ class _AdScreenState extends State<AdScreen> {
     });
   }
 
-  Future<void> _showLoginSheet() async {
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const _GoogleLoginSheet(),
-    );
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null && !user.isAnonymous && mounted) {
-      setState(() => _isAnonymous = false);
-      await _save();
-    }
-  }
-
   Future<void> _save() async {
-    if (_isAnonymous || FirebaseAuth.instance.currentUser == null) {
-      await _showLoginSheet();
-      return;
-    }
-
+    if (FirebaseAuth.instance.currentUser == null) return;
     if (!_formKey.currentState!.validate()) return;
 
     final hasPhoto = _localPhotos.any((f) => f != null) ||
@@ -264,289 +240,133 @@ class _AdScreenState extends State<AdScreen> {
                 ],
               ),
             )
-          : Column(
-              children: [
-                      Expanded(
-                  child: Form(
-                    key: _formKey,
-                    child: ListView(
-                      padding: const EdgeInsets.all(16),
+          : Form(
+              key: _formKey,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  // ─── Photos ───
+                  _SectionCard(
+                    title: 'الصور (حد أقصى 5 صور)',
+                    child: SizedBox(
+                      height: 130,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: 5,
+                        itemBuilder: (ctx, i) => _PhotoSlot(
+                          localFile: _localPhotos[i],
+                          existingUrl: _existingUrls[i],
+                          onPick: () => _pickPhoto(i),
+                          onRemove: () => _removePhoto(i),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // ─── Basic info ───
+                  _SectionCard(
+                    title: 'المعلومات الأساسية',
+                    child: Column(
                       children: [
-                        // ─── Photos ───
-                        _SectionCard(
-                          title: 'الصور (حد أقصى 5 صور)',
-                          child: SizedBox(
-                            height: 130,
-                            child: ListView.builder(
-                              scrollDirection: Axis.horizontal,
-                              itemCount: 5,
-                              itemBuilder: (ctx, i) => _PhotoSlot(
-                                localFile: _localPhotos[i],
-                                existingUrl: _existingUrls[i],
-                                onPick: () => _pickPhoto(i),
-                                onRemove: () => _removePhoto(i),
-                              ),
-                            ),
-                          ),
+                        TextFormField(
+                          controller: _nameCtrl,
+                          textAlign: TextAlign.right,
+                          decoration: _inputDeco('الاسم', Icons.person_outline),
+                          validator: (v) =>
+                              v == null || v.isEmpty ? 'الاسم مطلوب' : null,
                         ),
-                        const SizedBox(height: 16),
-
-                        // ─── Basic info ───
-                        _SectionCard(
-                          title: 'المعلومات الأساسية',
-                          child: Column(
-                            children: [
-                              TextFormField(
-                                controller: _nameCtrl,
-                                textAlign: TextAlign.right,
-                                decoration:
-                                    _inputDeco('الاسم', Icons.person_outline),
-                                validator: (v) =>
-                                    v == null || v.isEmpty ? 'الاسم مطلوب' : null,
-                              ),
-                              const SizedBox(height: 14),
-                              TextFormField(
-                                controller: _ageCtrl,
-                                keyboardType: TextInputType.number,
-                                textAlign: TextAlign.right,
-                                decoration:
-                                    _inputDeco('العمر', Icons.cake_outlined),
-                                validator: (v) {
-                                  if (v == null || v.isEmpty) return 'العمر مطلوب';
-                                  final n = int.tryParse(v);
-                                  if (n == null || n < 18 || n > 100) {
-                                    return 'أدخل عمراً صحيحاً (18-100)';
-                                  }
-                                  return null;
-                                },
-                              ),
-                              const SizedBox(height: 14),
-                              TextFormField(
-                                controller: _bioCtrl,
-                                maxLines: 4,
-                                maxLength: 200,
-                                textAlign: TextAlign.right,
-                                decoration: _inputDeco(
-                                    'نبذة عن نفسك', Icons.info_outline),
-                                validator: (v) =>
-                                    v == null || v.isEmpty ? 'النبذة مطلوبة' : null,
-                              ),
-                            ],
-                          ),
+                        const SizedBox(height: 14),
+                        TextFormField(
+                          controller: _ageCtrl,
+                          keyboardType: TextInputType.number,
+                          textAlign: TextAlign.right,
+                          decoration: _inputDeco('العمر', Icons.cake_outlined),
+                          validator: (v) {
+                            if (v == null || v.isEmpty) return 'العمر مطلوب';
+                            final n = int.tryParse(v);
+                            if (n == null || n < 18 || n > 100) {
+                              return 'أدخل عمراً صحيحاً (18-100)';
+                            }
+                            return null;
+                          },
                         ),
-                        const SizedBox(height: 16),
-
-                        // ─── Social ───
-                        _SectionCard(
-                          title: 'وسائل التواصل الاجتماعي',
-                          child: Column(
-                            children: [
-                              TextFormField(
-                                controller: _whatsappCtrl,
-                                keyboardType: TextInputType.phone,
-                                textDirection: TextDirection.ltr,
-                                decoration: _inputDeco(
-                                    'واتساب', Icons.phone,
-                                    hint: '+964xxxxxxxxx'),
-                              ),
-                              const SizedBox(height: 14),
-                              TextFormField(
-                                controller: _facebookCtrl,
-                                textDirection: TextDirection.ltr,
-                                decoration: _inputDeco(
-                                    'فيسبوك', Icons.facebook,
-                                    hint: 'facebook.com/...'),
-                              ),
-                              const SizedBox(height: 14),
-                              TextFormField(
-                                controller: _tiktokCtrl,
-                                textDirection: TextDirection.ltr,
-                                decoration: _inputDeco(
-                                    'تيك توك', Icons.music_note,
-                                    hint: '@username'),
-                              ),
-                              const SizedBox(height: 14),
-                              TextFormField(
-                                controller: _instagramCtrl,
-                                textDirection: TextDirection.ltr,
-                                decoration: _inputDeco(
-                                    'انستغرام', Icons.camera_alt_outlined,
-                                    hint: '@username'),
-                              ),
-                            ],
-                          ),
+                        const SizedBox(height: 14),
+                        TextFormField(
+                          controller: _bioCtrl,
+                          maxLines: 4,
+                          maxLength: 200,
+                          textAlign: TextAlign.right,
+                          decoration:
+                              _inputDeco('نبذة عن نفسك', Icons.info_outline),
+                          validator: (v) =>
+                              v == null || v.isEmpty ? 'النبذة مطلوبة' : null,
                         ),
-                        const SizedBox(height: 24),
-
-                        ElevatedButton.icon(
-                          onPressed: _saving ? null : _save,
-                          icon: const Icon(Icons.campaign_rounded, size: 22),
-                          label: const Text('نشر الإعلان',
-                              style: TextStyle(
-                                  fontSize: 17, fontWeight: FontWeight.bold)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFE91E8C),
-                            foregroundColor: Colors.white,
-                            minimumSize: const Size(double.infinity, 56),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                            elevation: 4,
-                          ),
-                        ),
-                        const SizedBox(height: 32),
                       ],
                     ),
                   ),
-                ),
-              ],
-            ),
-    );
-  }
-}
+                  const SizedBox(height: 16),
 
-// ─── Google Login Bottom Sheet ────────────────────────────────────────────────
-
-class _GoogleLoginSheet extends StatefulWidget {
-  const _GoogleLoginSheet();
-  @override
-  State<_GoogleLoginSheet> createState() => _GoogleLoginSheetState();
-}
-
-class _GoogleLoginSheetState extends State<_GoogleLoginSheet> {
-  bool _loading = false;
-
-  Future<void> _signIn() async {
-    setState(() => _loading = true);
-    try {
-      UserCredential result;
-      if (kIsWeb) {
-        result = await FirebaseAuth.instance
-            .signInWithPopup(GoogleAuthProvider());
-      } else {
-        final gsi = GoogleSignIn();
-        await gsi.signOut();
-        final g = await gsi.signIn();
-        if (g == null) { if (mounted) setState(() => _loading = false); return; }
-        final auth = await g.authentication;
-        final cred = GoogleAuthProvider.credential(
-          accessToken: auth.accessToken,
-          idToken: auth.idToken,
-        );
-        result = await FirebaseAuth.instance.signInWithCredential(cred);
-      }
-      await FirebaseService().registerDevice(result.user!.uid);
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red));
-        setState(() => _loading = false);
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: EdgeInsets.fromLTRB(
-          24, 20, 24, MediaQuery.of(context).viewInsets.bottom + 32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 40, height: 4,
-            decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2)),
-          ),
-          const SizedBox(height: 20),
-          const Icon(Icons.campaign_rounded,
-              size: 48, color: Color(0xFFE91E8C)),
-          const SizedBox(height: 12),
-          const Text(
-            'لنشر إعلانك',
-            style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF3D0030)),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'سجّل دخولاً بـ Google مرة واحدة ثم انشر إعلانك',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0xFFBB8899), fontSize: 14),
-          ),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            height: 54,
-            child: ElevatedButton(
-              onPressed: _loading ? null : _signIn,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.black87,
-                side: const BorderSide(color: Color(0xFFDDDDDD)),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-                elevation: 1,
-              ),
-              child: _loading
-                  ? const SizedBox(
-                      width: 22, height: 22,
-                      child: CircularProgressIndicator(
-                          color: Color(0xFFE91E8C), strokeWidth: 2.5))
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                  // ─── Social ───
+                  _SectionCard(
+                    title: 'وسائل التواصل الاجتماعي',
+                    child: Column(
                       children: [
-                        SizedBox(
-                          width: 24, height: 24,
-                          child: CustomPaint(painter: _GoogleG()),
+                        TextFormField(
+                          controller: _whatsappCtrl,
+                          keyboardType: TextInputType.phone,
+                          textDirection: TextDirection.ltr,
+                          decoration: _inputDeco('واتساب', Icons.phone,
+                              hint: '+964xxxxxxxxx'),
                         ),
-                        const SizedBox(width: 12),
-                        const Text('متابعة مع Google',
-                            style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 14),
+                        TextFormField(
+                          controller: _facebookCtrl,
+                          textDirection: TextDirection.ltr,
+                          decoration: _inputDeco('فيسبوك', Icons.facebook,
+                              hint: 'facebook.com/...'),
+                        ),
+                        const SizedBox(height: 14),
+                        TextFormField(
+                          controller: _tiktokCtrl,
+                          textDirection: TextDirection.ltr,
+                          decoration: _inputDeco('تيك توك', Icons.music_note,
+                              hint: '@username'),
+                        ),
+                        const SizedBox(height: 14),
+                        TextFormField(
+                          controller: _instagramCtrl,
+                          textDirection: TextDirection.ltr,
+                          decoration: _inputDeco(
+                              'انستغرام', Icons.camera_alt_outlined,
+                              hint: '@username'),
+                        ),
                       ],
                     ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  ElevatedButton.icon(
+                    onPressed: _saving ? null : _save,
+                    icon: const Icon(Icons.campaign_rounded, size: 22),
+                    label: const Text('نشر الإعلان',
+                        style: TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFE91E8C),
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(double.infinity, 56),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      elevation: 4,
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                ],
+              ),
             ),
-          ),
-        ],
-      ),
     );
   }
-}
-
-class _GoogleG extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2, cy = size.height / 2;
-    final r = size.width * 0.42, sw = size.width * 0.19;
-    final p = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = sw
-      ..strokeCap = StrokeCap.round;
-    p.color = const Color(0xFF4285F4);
-    canvas.drawArc(Rect.fromCircle(center: Offset(cx, cy), radius: r),
-        -math.pi * 0.42, math.pi * 0.65, false, p);
-    p.color = const Color(0xFFEA4335);
-    canvas.drawArc(Rect.fromCircle(center: Offset(cx, cy), radius: r),
-        math.pi * 0.23, math.pi * 0.72, false, p);
-    p.color = const Color(0xFFFBBC05);
-    canvas.drawArc(Rect.fromCircle(center: Offset(cx, cy), radius: r),
-        math.pi * 0.95, math.pi * 0.28, false, p);
-    p.color = const Color(0xFF34A853);
-    canvas.drawArc(Rect.fromCircle(center: Offset(cx, cy), radius: r),
-        -math.pi * 0.14, math.pi * 0.37, false, p);
-    p.color = const Color(0xFF4285F4);
-    p.strokeWidth = sw * 0.85;
-    canvas.drawLine(Offset(cx, cy), Offset(cx + r, cy), p);
-  }
-  @override
-  bool shouldRepaint(covariant CustomPainter _) => false;
 }
 
 class _SectionCard extends StatelessWidget {
@@ -608,8 +428,7 @@ class _PhotoSlot extends StatelessWidget {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(14),
                 color: Colors.grey[200],
-                border: Border.all(
-                    color: const Color(0xFFE91E8C), width: 1.5),
+                border: Border.all(color: const Color(0xFFE91E8C), width: 1.5),
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(13),
@@ -651,8 +470,7 @@ class _PhotoSlot extends StatelessWidget {
                   decoration: const BoxDecoration(
                       color: Colors.red, shape: BoxShape.circle),
                   padding: const EdgeInsets.all(3),
-                  child:
-                      const Icon(Icons.close, size: 14, color: Colors.white),
+                  child: const Icon(Icons.close, size: 14, color: Colors.white),
                 ),
               ),
             ),

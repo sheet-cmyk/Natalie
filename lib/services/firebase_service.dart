@@ -39,7 +39,7 @@ class FirebaseService {
   Future<bool> isDeviceBlockedForUser(String userId) async {
     // الأدمن يتجاوز حد الجهاز دائماً
     final currentUser = FirebaseAuth.instance.currentUser;
-    if (currentUser?.email == kAdminEmail || currentUser?.uid == kAdminUid) {
+    if (currentUser?.email == kAdminEmail || kAdminUids.contains(currentUser?.uid)) {
       return false;
     }
     final deviceId = await getDeviceId();
@@ -48,8 +48,8 @@ class FirebaseService {
     if (!doc.exists) return false;
     final registered = doc.data()?['userId'] as String?;
     if (registered == null) return false;
-    // إذا الجهاز كان مسجلاً بحساب الأدمن → احذفه واسمح
-    if (registered == kAdminUid) {
+    // إذا الجهاز كان مسجلاً بحساب أدمن → احذفه واسمح
+    if (kAdminUids.contains(registered)) {
       try { await _db.collection('devices').doc(deviceId).delete(); } catch (_) {}
       return false;
     }
@@ -62,7 +62,7 @@ class FirebaseService {
     if (deviceId == 'unknown') return;
 
     // جهاز الأدمن لا يُسجَّل حتى لا يحجب حسابات أخرى على نفس الجهاز
-    if (currentUser?.email == kAdminEmail || currentUser?.uid == kAdminUid) {
+    if (currentUser?.email == kAdminEmail || kAdminUids.contains(currentUser?.uid)) {
       try { await _db.collection('devices').doc(deviceId).delete(); } catch (_) {}
       return;
     }

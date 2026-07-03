@@ -213,64 +213,6 @@ class _HomeScreenState extends State<HomeScreen> {
             // ── Banner Ads ───────────────────────────────────────────
             const SliverToBoxAdapter(child: _BannerAds()),
 
-            // ── Guest banner ─────────────────────────────────────────
-            if (FirebaseAuth.instance.currentUser?.isAnonymous == true)
-              SliverToBoxAdapter(
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 11),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Color(0xFF78350F), Color(0xFFB45309)],
-                      begin: Alignment.centerRight,
-                      end: Alignment.centerLeft,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.lock_outline_rounded,
-                          color: Colors.white, size: 17),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: Text(
-                          'أنت زائر — سجّل دخولاً بـ Google لنشر إعلانك',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        onTap: () => Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => const AuthScreen()),
-                        ),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.18),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                                color: Colors.white38, width: 1),
-                          ),
-                          child: const Text(
-                            'تسجيل دخول',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
             // ── Action buttons (هداية / اشتراك / اسناب) ─────────────
             const SliverToBoxAdapter(child: _ActionBar()),
 
@@ -990,9 +932,10 @@ class _ActionBar extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: _ActionBtn(
-                  label: 'سناب',
-                  icon: Icons.camera_enhance_rounded,
-                  color: const Color(0xFFD4A017),
+                  label: 'مجموعة واتساب\nامريكة',
+                  icon: Icons.chat_rounded,
+                  flag: '🇺🇸',
+                  color: const Color(0xFF25D366),
                   onTap: () => _open(ctx, snapchatUrl),
                 ),
               ),
@@ -1009,18 +952,20 @@ class _ActionBtn extends StatelessWidget {
   final IconData icon;
   final Color color;
   final VoidCallback onTap;
+  final String? flag;
   const _ActionBtn(
       {required this.label,
       required this.icon,
       required this.color,
-      required this.onTap});
+      required this.onTap,
+      this.flag});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 11),
+        padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.09),
           borderRadius: BorderRadius.circular(14),
@@ -1029,14 +974,27 @@ class _ActionBtn extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: color, size: 26),
+            if (flag != null)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, color: color, size: 22),
+                  const SizedBox(width: 3),
+                  Text(flag!, style: const TextStyle(fontSize: 18)),
+                ],
+              )
+            else
+              Icon(icon, color: color, size: 26),
             const SizedBox(height: 4),
             Text(
               label,
+              textAlign: TextAlign.center,
               style: TextStyle(
                   color: color,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  height: 1.3),
             ),
           ],
         ),
