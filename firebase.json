@@ -1,0 +1,29 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "om-natalie",
+          "appId": "1:1016050589765:android:377d7871bbfe58fd04432c",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "om-natalie",
+          "configurations": {
+            "android": "1:1016050589765:android:377d7871bbfe58fd04432c",
+            "ios": "1:1016050589765:ios:4c4efd4949496d8704432c"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "1016050589765",
+    "project_id": "om-natalie",
+    "storage_bucket": "om-natalie.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1016050589765:android:377d7871bbfe58fd04432c",
+        "android_client_info": {
+          "package_name": "com.example.om_natalie"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1016050589765-g42e47ep4kacbgfadel7s2rd2v9h6rfp.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.om_natalie",
+            "certificate_hash": "3656c73926a3307d0248894046ea6002f13f7704"
+          }
+        },
+        {
+          "client_id": "1016050589765-jppc1bkb5o9qsq94mgj1q38455agh73p.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC7KHN_pKl2UX5-DjfhoeMGH-J3GYigoQw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1016050589765-jppc1bkb5o9qsq94mgj1q38455agh73p.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "1016050589765-ag37oj32v5ph9v7ob1mtshqajlad6cbb.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.omNatalie"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
