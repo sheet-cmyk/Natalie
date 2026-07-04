@@ -8,6 +8,7 @@ import '../models/user_model.dart';
 import 'post_detail_screen.dart';
 
 const String kAdminEmail = 'hussein1sheet@gmail.com';
+const String kAdminPin   = 'Alzain2020';
 const List<String> kAdminUids = [
   'zO8KCjQ9iYXTBg7xe7Ru3ZPL7yF3',
   '7LYJJ9FR6eU5YYVxWOdn7Ok2p4t1',
@@ -15,7 +16,12 @@ const List<String> kAdminUids = [
   '7KyzgxPXNDXftSLxSLzSNNLJwAS2',
 ];
 
+// PIN-granted admin for current session
+bool _pinAdminGranted = false;
+void grantPinAdmin() => _pinAdminGranted = true;
+
 bool isAdminUser() {
+  if (_pinAdminGranted) return true;
   final user = FirebaseAuth.instance.currentUser;
   return user?.email == kAdminEmail || kAdminUids.contains(user?.uid);
 }

@@ -526,35 +526,13 @@ class _AdminPinDialogState extends State<_AdminPinDialog> {
       return;
     }
     setState(() { _loading = true; _error = null; });
-    try {
-      try {
-        await FirebaseAuth.instance.signInWithEmailAndPassword(
-            email: kAdminEmail, password: pin);
-      } on FirebaseAuthException catch (e) {
-        if (e.code == 'user-not-found') {
-          await FirebaseAuth.instance.createUserWithEmailAndPassword(
-              email: kAdminEmail, password: pin);
-        } else {
-          rethrow;
-        }
-      }
-      if (!isAdminUser()) {
-        await FirebaseAuth.instance.signOut();
-        setState(() { _loading = false; _error = 'الرقم السري غير صحيح'; });
-        return;
-      }
-      if (mounted) Navigator.pop(context, true);
-    } on FirebaseAuthException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = (e.code == 'wrong-password' || e.code == 'invalid-credential')
-            ? 'الرقم السري غير صحيح'
-            : (e.message ?? 'خطأ غير معروف');
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() { _loading = false; _error = e.toString(); });
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (!mounted) return;
+    if (pin == kAdminPin) {
+      grantPinAdmin();
+      Navigator.pop(context, true);
+    } else {
+      setState(() { _loading = false; _error = 'الرقم السري غير صحيح'; });
     }
   }
 
