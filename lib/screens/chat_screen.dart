@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'admin_screen.dart' show isAdminUser;
 
 class ChatScreen extends StatefulWidget {
   final String chatId;
@@ -26,16 +27,32 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scrollCtrl = ScrollController();
   final _db = FirebaseFirestore.instance;
   String _myName = '';
+  String _myPhoto = '';
   bool _sending = false;
 
   @override
   void initState() {
     super.initState();
-    _db
-        .collection('users')
-        .doc(widget.myUid)
-        .get()
-        .then((d) => _myName = (d.data()?['name'] as String?) ?? 'مستخدم');
+    _loadMyIdentity();
+  }
+
+  Future<void> _loadMyIdentity() async {
+    if (isAdminUser()) {
+      final snap = await _db.collection('config').doc('admin_profile').get();
+      final data = snap.data() ?? {};
+      final name = (data['name'] as String?)?.trim() ?? '';
+      if (mounted) {
+        _myName = name.isEmpty ? 'Admin' : name;
+        _myPhoto = data['photoUrl'] as String? ?? '';
+      }
+    } else {
+      final snap = await _db.collection('users').doc(widget.myUid).get();
+      final data = snap.data() ?? {};
+      if (mounted) {
+        _myName = (data['name'] as String?) ?? 'مستخدم';
+        _myPhoto = '';
+      }
+    }
   }
 
   @override
@@ -73,6 +90,14 @@ class _ChatScreenState extends State<ChatScreen> {
         'lastMessage': text,
         'lastFrom': widget.myUid,
         'lastAt': FieldValue.serverTimestamp(),
+        'names': {
+          widget.myUid: _myName,
+          widget.friendUid: widget.friendName,
+        },
+        'photos': {
+          widget.myUid: _myPhoto,
+          widget.friendUid: widget.friendPhoto,
+        },
       },
       SetOptions(merge: true),
     );

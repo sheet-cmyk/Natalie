@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -70,19 +71,63 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
   final _db = FirebaseFirestore.instance;
   String? get _uid => FirebaseAuth.instance.currentUser?.uid;
-  bool get _isAnon =>
-      FirebaseAuth.instance.currentUser?.isAnonymous ?? true;
 
   DocumentReference get _likesRef =>
       _db.collection('post_likes').doc(widget.postId);
 
-  Future<void> _toggleLike(List likedBy) async {
-    if (_isAnon || _uid == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('سجّل دخولاً لتتمكن من الإعجاب')),
-      );
-      return;
+  StreamSubscription<User?>? _authSub;
+  bool _viewRecorded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_uid != null) {
+      _recordView();
+    } else {
+      // web: auth not yet restored — wait for it
+      _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+        if (user != null && !_viewRecorded && mounted) {
+          _authSub?.cancel();
+          _authSub = null;
+          _recordView();
+          setState(() {}); // rebuild so _uid-based widgets update
+        }
+      });
     }
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    _pageCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _recordView() async {
+    if (_uid == null || _uid == widget.ownerUid) return;
+    _viewRecorded = true;
+    try {
+      final viewerRef = _db
+          .collection('profile_views')
+          .doc(widget.postId)
+          .collection('viewers')
+          .doc(_uid);
+      final snap = await viewerRef.get();
+      if (!snap.exists) {
+        final batch = _db.batch();
+        batch.set(viewerRef, {'viewedAt': FieldValue.serverTimestamp()});
+        batch.set(
+          _db.collection('profile_views').doc(widget.postId),
+          {'count': FieldValue.increment(1)},
+          SetOptions(merge: true),
+        );
+        await batch.commit();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _toggleLike(List likedBy) async {
+    if (_uid == null) return;
     final liked = likedBy.contains(_uid);
     await _likesRef.set({
       'likedBy': liked
@@ -133,12 +178,6 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       await launchUrl(Uri.parse('https://instagram.com/$name'),
           mode: LaunchMode.externalApplication);
     }
-  }
-
-  @override
-  void dispose() {
-    _pageCtrl.dispose();
-    super.dispose();
   }
 
   @override
@@ -480,7 +519,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     const SizedBox(height: 24),
                   ],
 
-                  // ── زر القلب والتقييم ──────────────────────────────
+                  // ── إعجاب وزيارات ─────────────────────────────────
                   const Divider(color: Color(0xFFFFEEF6), thickness: 1),
                   StreamBuilder<DocumentSnapshot>(
                     stream: _likesRef.snapshots(),
@@ -489,16 +528,15 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                           snap.data?.data() as Map<String, dynamic>?;
                       final likedBy =
                           List.from(data?['likedBy'] as List? ?? []);
-                      final count = likedBy.length;
+                      final likeCount = likedBy.length;
                       final isLiked =
                           _uid != null && likedBy.contains(_uid);
 
                       return Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 12),
+                        padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
                         child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
+                            // زر القلب
                             GestureDetector(
                               onTap: () => _toggleLike(likedBy),
                               child: AnimatedSwitcher(
@@ -515,26 +553,55 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                   color: isLiked
                                       ? const Color(0xFFE91E8C)
                                       : Colors.grey[400],
-                                  size: 36,
+                                  size: 34,
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 10),
+                            const SizedBox(width: 8),
                             Text(
-                              '$count',
+                              '$likeCount',
                               style: TextStyle(
-                                fontSize: 20,
+                                fontSize: 18,
                                 fontWeight: FontWeight.bold,
                                 color: isLiked
                                     ? const Color(0xFFE91E8C)
                                     : Colors.grey[400],
                               ),
                             ),
-                            const SizedBox(width: 6),
-                            Text(
-                              'إعجاب',
-                              style: TextStyle(
-                                  fontSize: 14, color: Colors.grey[400]),
+                            const SizedBox(width: 4),
+                            Text('إعجاب',
+                                style: TextStyle(
+                                    fontSize: 13, color: Colors.grey[400])),
+                            const Spacer(),
+                            // عداد الزيارات الفريدة
+                            StreamBuilder<DocumentSnapshot>(
+                              stream: _db
+                                  .collection('profile_views')
+                                  .doc(widget.postId)
+                                  .snapshots(),
+                              builder: (ctx2, snapV) {
+                                final viewCount = ((snapV.data?.data()
+                                        as Map<String, dynamic>?)?['count']
+                                    as num?)
+                                    ?.toInt() ?? 0;
+                                return Row(
+                                  children: [
+                                    Icon(Icons.visibility_outlined,
+                                        color: Colors.grey[400], size: 18),
+                                    const SizedBox(width: 4),
+                                    Text('$viewCount',
+                                        style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.grey[400])),
+                                    const SizedBox(width: 3),
+                                    Text('زيارة',
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey[400])),
+                                  ],
+                                );
+                              },
                             ),
                           ],
                         ),
@@ -555,7 +622,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
 // ─── Friend Status Button ─────────────────────────────────────────────────────
 
-enum _FriendStatus { loading, none, friends }
+enum _FriendStatus { loading, none, pending, friends }
 
 class _FriendStatusButton extends StatefulWidget {
   final String ownerUid;
@@ -574,20 +641,46 @@ class _FriendStatusButton extends StatefulWidget {
 class _FriendStatusButtonState extends State<_FriendStatusButton> {
   final _db = FirebaseFirestore.instance;
   String? get _myUid => FirebaseAuth.instance.currentUser?.uid;
-  bool get _isAnon =>
-      FirebaseAuth.instance.currentUser?.isAnonymous ?? true;
 
   _FriendStatus _status = _FriendStatus.loading;
   bool _busy = false;
+  StreamSubscription<User?>? _authSub;
 
   @override
   void initState() {
     super.initState();
-    if (_myUid == null || _isAnon || _myUid == widget.ownerUid) {
-      _status = _FriendStatus.none;
-      return;
+    final uid = _myUid;
+    if (uid != null) {
+      _initWithUid(uid);
+    } else {
+      // web: wait for auth to restore, then rebuild
+      _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+        if (user != null && mounted) {
+          _authSub?.cancel();
+          _authSub = null;
+          _initWithUid(user.uid);
+          setState(() {}); // re-render so build() sees the uid
+        }
+      });
     }
-    _check();
+  }
+
+  void _initWithUid(String uid) {
+    if (uid == widget.ownerUid) {
+      if (mounted) {
+        setState(() => _status = _FriendStatus.none);
+      } else {
+        _status = _FriendStatus.none;
+      }
+    } else {
+      _check();
+    }
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _check() async {
@@ -600,8 +693,16 @@ class _FriendStatusButtonState extends State<_FriendStatusButton> {
           .doc(widget.ownerUid)
           .get();
       if (!mounted) return;
-      setState(() =>
-          _status = fSnap.exists ? _FriendStatus.friends : _FriendStatus.none);
+      if (fSnap.exists) {
+        setState(() => _status = _FriendStatus.friends);
+        return;
+      }
+      final reqSnap = await _db
+          .collection('friend_requests')
+          .doc('${uid}_req_${widget.ownerUid}')
+          .get();
+      if (!mounted) return;
+      setState(() => _status = reqSnap.exists ? _FriendStatus.pending : _FriendStatus.none);
     } catch (_) {
       if (mounted) setState(() => _status = _FriendStatus.none);
     }
@@ -616,66 +717,43 @@ class _FriendStatusButtonState extends State<_FriendStatusButton> {
     setState(() => _busy = true);
     try {
       final uid = _myUid!;
-      final chatId = _chatId();
-
       final myDoc = await _db.collection('users').doc(uid).get();
+      final myUsername = (myDoc.data()?['username'] as String?) ?? '';
       final myName = (myDoc.data()?['name'] as String?) ?? 'مستخدم';
       final myPhoto =
           ((myDoc.data()?['photoUrls'] as List?)?.firstOrNull as String?) ?? '';
 
-      final batch = _db.batch();
+      await _db
+          .collection('friend_requests')
+          .doc('${uid}_req_${widget.ownerUid}')
+          .set({
+        'from': uid,
+        'to': widget.ownerUid,
+        'fromUsername': myUsername.isNotEmpty ? myUsername : myName,
+        'fromName': myName,
+        'fromPhoto': myPhoto,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
 
-      // أضفني إلى قائمة صديق صاحب الملف
-      batch.set(
-        _db.collection('friends').doc(uid).collection('list').doc(widget.ownerUid),
-        {
-          'uid': widget.ownerUid,
-          'name': widget.ownerName,
-          'photoUrl': widget.ownerPhoto,
-          'chatId': chatId,
-          'addedAt': FieldValue.serverTimestamp(),
-        },
-      );
+      if (mounted) setState(() { _busy = false; _status = _FriendStatus.pending; });
+    } catch (e) {
+      if (mounted) {
+        setState(() => _busy = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('خطأ: $e'), backgroundColor: const Color(0xFF7F1D1D)));
+      }
+    }
+  }
 
-      // أضفه إلى قائمة أصدقائي
-      batch.set(
-        _db.collection('friends').doc(widget.ownerUid).collection('list').doc(uid),
-        {
-          'uid': uid,
-          'name': myName,
-          'photoUrl': myPhoto,
-          'chatId': chatId,
-          'addedAt': FieldValue.serverTimestamp(),
-        },
-      );
-
-      // أنشئ/احتفظ بمحادثة مشتركة
-      batch.set(
-        _db.collection('chats').doc(chatId),
-        {
-          'participants': [uid, widget.ownerUid],
-          'lastMessage': '',
-          'lastAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-
-      // أرسل إشعاراً للمضاف
-      batch.set(
-        _db.collection('inbox').doc(widget.ownerUid).collection('messages').doc(),
-        {
-          'type': 'friend_added',
-          'from': uid,
-          'fromName': myName,
-          'fromPhoto': myPhoto,
-          'text': '$myName أضافك كصديق',
-          'read': false,
-          'createdAt': FieldValue.serverTimestamp(),
-        },
-      );
-
-      await batch.commit();
-      if (mounted) setState(() { _busy = false; _status = _FriendStatus.friends; });
+  Future<void> _cancelRequest() async {
+    setState(() => _busy = true);
+    try {
+      final uid = _myUid!;
+      await _db
+          .collection('friend_requests')
+          .doc('${uid}_req_${widget.ownerUid}')
+          .delete();
+      if (mounted) setState(() { _busy = false; _status = _FriendStatus.none; });
     } catch (e) {
       if (mounted) {
         setState(() => _busy = false);
@@ -747,33 +825,6 @@ class _FriendStatusButtonState extends State<_FriendStatusButton> {
       return const SizedBox.shrink();
     }
 
-    // زائر: زر مراسلة مقفل مع رسالة
-    if (_isAnon) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-        child: SizedBox(
-          width: double.infinity,
-          height: 48,
-          child: OutlinedButton.icon(
-            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text('سجّل دخولاً بـ Google للمراسلة والإضافة')),
-            ),
-            icon: const Icon(Icons.lock_outline_rounded,
-                size: 18, color: Color(0xFFBB8899)),
-            label: const Text('مراسلة',
-                style: TextStyle(fontSize: 15, color: Color(0xFFBB8899))),
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Color(0xFFFFCCE8), width: 1.3),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-            ),
-          ),
-        ),
-      );
-    }
-
-    // مستخدم مسجل: زر مراسلة مباشرة + زر صداقة ثانوي
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -816,6 +867,36 @@ class _FriendStatusButtonState extends State<_FriendStatusButton> {
                 height: 16,
                 child: CircularProgressIndicator(
                     color: Color(0xFFE91E8C), strokeWidth: 2))),
+      );
+    }
+
+    if (_status == _FriendStatus.pending) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+        child: SizedBox(
+          height: 42,
+          child: OutlinedButton.icon(
+            onPressed: _busy ? null : _cancelRequest,
+            icon: _busy
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.orange))
+                : const Icon(Icons.hourglass_empty_rounded,
+                    size: 16, color: Colors.orange),
+            label: const Text('طلب مُرسل — اضغط للإلغاء',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.orange)),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: Colors.orange, width: 1.2),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+            ),
+          ),
+        ),
       );
     }
 

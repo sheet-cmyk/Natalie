@@ -2,6 +2,7 @@ class UserModel {
   final String uid;
   final String email;
   String name;
+  String username; // معرّف فريد 4-10 أحرف/أرقام
   int age;
   String bio;
   String whatsapp;
@@ -10,11 +11,14 @@ class UserModel {
   String instagram;
   List<String> photoUrls;
   bool published;
+  bool blocked;
+  bool pendingPublish;
 
   UserModel({
     required this.uid,
     required this.email,
     this.name = '',
+    this.username = '',
     this.age = 0,
     this.bio = '',
     this.whatsapp = '',
@@ -23,6 +27,8 @@ class UserModel {
     this.instagram = '',
     this.photoUrls = const [],
     this.published = false,
+    this.blocked = false,
+    this.pendingPublish = false,
   });
 
   bool get isComplete =>
@@ -31,6 +37,7 @@ class UserModel {
   Map<String, dynamic> toMap() => {
         'email': email,
         'name': name,
+        'username': username,
         'age': age,
         'bio': bio,
         'whatsapp': whatsapp,
@@ -45,6 +52,7 @@ class UserModel {
         uid: uid,
         email: map['email'] ?? '',
         name: map['name'] ?? '',
+        username: map['username'] ?? '',
         age: map['age'] is int
             ? map['age'] as int
             : int.tryParse(map['age']?.toString() ?? '') ?? 0,
@@ -55,5 +63,7 @@ class UserModel {
         instagram: map['instagram'] ?? '',
         photoUrls: List<String>.from(map['photoUrls'] ?? []),
         published: map['published'] ?? false,
+        blocked: map['blocked'] ?? false,
+        pendingPublish: map['pendingPublish'] ?? false,
       );
 }

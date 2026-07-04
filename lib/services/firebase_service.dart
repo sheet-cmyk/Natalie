@@ -85,10 +85,41 @@ class FirebaseService {
   }
 
   Future<void> saveUser(UserModel user) async {
-    await _db.collection('users').doc(user.uid).set(
+    final batch = _db.batch();
+    batch.set(
+      _db.collection('users').doc(user.uid),
       {...user.toMap(), 'updatedAt': FieldValue.serverTimestamp()},
       SetOptions(merge: true),
     );
+    // index username → uid for fast lookup
+    if (user.username.isNotEmpty) {
+      batch.set(
+        _db.collection('usernames').doc(user.username.toLowerCase()),
+        {'uid': user.uid, 'username': user.username},
+      );
+    }
+    await batch.commit();
+  }
+
+  // returns null if username is taken (by someone else)
+  Future<bool> isUsernameTaken(String username, String myUid) async {
+    final doc = await _db
+        .collection('usernames')
+        .doc(username.toLowerCase())
+        .get();
+    if (!doc.exists) return false;
+    return doc.data()?['uid'] != myUid;
+  }
+
+  Future<UserModel?> searchByUsername(String username) async {
+    final doc = await _db
+        .collection('usernames')
+        .doc(username.toLowerCase())
+        .get();
+    if (!doc.exists) return null;
+    final uid = doc.data()?['uid'] as String?;
+    if (uid == null) return null;
+    return getUser(uid);
   }
 
   Future<String> uploadPhoto(String uid, XFile file, int index) async {
@@ -139,8 +170,10 @@ class FirebaseService {
         .where('published', isEqualTo: true)
         .snapshots()
         .map((snap) {
-      final users =
-          snap.docs.map((d) => UserModel.fromMap(d.id, d.data())).toList();
+      final users = snap.docs
+          .map((d) => UserModel.fromMap(d.id, d.data()))
+          .where((u) => !u.blocked)
+          .toList();
       users.sort((a, b) {
         final aTime =
             snap.docs.firstWhere((d) => d.id == a.uid).data()['updatedAt'];

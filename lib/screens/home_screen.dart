@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -11,7 +12,7 @@ import '../models/user_model.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 import 'ad_screen.dart';
-import 'admin_screen.dart';
+import 'admin_screen.dart' show isAdminUser, initAdminState, AdminScreen, kAdminPin, grantPinAdmin;
 import 'auth_screen.dart';
 import 'friends_screen.dart';
 import 'post_detail_screen.dart';
@@ -27,19 +28,48 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _searchCtrl = TextEditingController();
   String _query = '';
+  bool _usernameLookupLoading = false;
   StreamSubscription<QuerySnapshot>? _inboxSub;
+  StreamSubscription<User?>? _authRestoreSub;
   DateTime? _startTime;
 
   @override
   void initState() {
     super.initState();
     _listenInbox();
+    _restoreAdminState();
+  }
+
+  /// On web, Firebase Auth restores the session asynchronously.
+  /// This waits for auth, then reads admin_sessions from Firestore.
+  void _restoreAdminState() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      _checkAndSetAdmin();
+    } else {
+      _authRestoreSub = FirebaseAuth.instance.authStateChanges().listen((u) {
+        if (u != null && mounted) {
+          _authRestoreSub?.cancel();
+          _authRestoreSub = null;
+          _checkAndSetAdmin();
+          _listenInbox(); // also start inbox listener now that auth is ready
+        }
+      });
+    }
+  }
+
+  Future<void> _checkAndSetAdmin() async {
+    if (isAdminUser()) {
+      if (mounted) setState(() {});
+      return;
+    }
+    await initAdminState();
+    if (mounted) setState(() {});
   }
 
   void _listenInbox() {
     final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null ||
-        FirebaseAuth.instance.currentUser?.isAnonymous == true) {
+    if (uid == null || FirebaseAuth.instance.currentUser?.isAnonymous == true) {
       return;
     }
     _startTime = DateTime.now();
@@ -50,32 +80,33 @@ class _HomeScreenState extends State<HomeScreen> {
         .where('read', isEqualTo: false)
         .snapshots()
         .listen((snap) {
-      for (final change in snap.docChanges) {
-        if (change.type != DocumentChangeType.added) continue;
-        final data = change.doc.data() as Map<String, dynamic>;
-        final ts = (data['createdAt'] as Timestamp?)?.toDate();
-        if (ts == null || ts.isBefore(_startTime!)) continue;
-        final type = data['type'] as String? ?? '';
-        final fromName = data['fromName'] as String? ?? 'مستخدم';
-        final String title, body;
-        if (type == 'message') {
-          title = fromName;
-          body = data['text'] as String? ?? '';
-        } else if (type == 'friend_request') {
-          title = 'طلب صداقة جديد';
-          body = '$fromName أرسل لك طلب صداقة';
-        } else {
-          title = fromName;
-          body = data['text'] as String? ?? '';
-        }
-        NotificationService().show(title: title, body: body);
-      }
-    });
+          for (final change in snap.docChanges) {
+            if (change.type != DocumentChangeType.added) continue;
+            final data = change.doc.data() as Map<String, dynamic>;
+            final ts = (data['createdAt'] as Timestamp?)?.toDate();
+            if (ts == null || ts.isBefore(_startTime!)) continue;
+            final type = data['type'] as String? ?? '';
+            final fromName = data['fromName'] as String? ?? 'مستخدم';
+            final String title, body;
+            if (type == 'message') {
+              title = fromName;
+              body = data['text'] as String? ?? '';
+            } else if (type == 'friend_request') {
+              title = 'طلب صداقة جديد';
+              body = '$fromName أرسل لك طلب صداقة';
+            } else {
+              title = fromName;
+              body = data['text'] as String? ?? '';
+            }
+            NotificationService().show(title: title, body: body);
+          }
+        });
   }
 
   @override
   void dispose() {
     _inboxSub?.cancel();
+    _authRestoreSub?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -93,9 +124,154 @@ class _HomeScreenState extends State<HomeScreen> {
         final u = item.profile!;
         return u.name.toLowerCase().contains(q) ||
             u.bio.toLowerCase().contains(q) ||
-            u.age.toString() == q;
+            u.age.toString() == q ||
+            u.username.toLowerCase().contains(q);
       }
     }).toList();
+  }
+
+  bool get _isUsernameQuery {
+    final q = _query.trim();
+    return q.length >= 4 && RegExp(r'^[a-zA-Z0-9]+$').hasMatch(q);
+  }
+
+  Future<void> _searchByUserId() async {
+    final q = _query.trim();
+    if (q.isEmpty || _usernameLookupLoading) return;
+    setState(() => _usernameLookupLoading = true);
+    try {
+      final user = await FirebaseService().searchByUsername(q);
+      if (!mounted) return;
+      if (user == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('لا يوجد مستخدم بهذا المعرّف: # $q'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => PostDetailScreen.fromProfile(user)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _usernameLookupLoading = false);
+    }
+  }
+
+  Future<void> _showAdminLogin() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _HomePinDialog(),
+    );
+    if (ok == true && mounted) {
+      await _checkAndSetAdmin();
+    }
+  }
+
+  Widget _buildNavBar(BuildContext _) {
+    final isGuest =
+        FirebaseAuth.instance.currentUser?.isAnonymous == true &&
+        !isAdminUser();
+
+    if (isGuest) {
+      return Row(
+        children: [
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                await FirebaseAuth.instance.signOut();
+                if (!mounted) return;
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AuthScreen()),
+                );
+              },
+              icon: const Icon(Icons.login_rounded, size: 18),
+              label: const Text(
+                'دخول / تسجيل',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE91E8C),
+                foregroundColor: Colors.white,
+                minimumSize: const Size(0, 46),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 4,
+                shadowColor: const Color(0xFFE91E8C).withValues(alpha: 0.35),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      children: [
+        _BottomNavBtn(
+          icon: Icons.group_outlined,
+          label: 'الأصدقاء',
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const FriendsScreen()),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AdScreen()),
+            ),
+            icon: const Icon(Icons.campaign_rounded, size: 18),
+            label: const Text(
+              'إضافة إعلان',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF7C3AED),
+              foregroundColor: Colors.white,
+              minimumSize: const Size(0, 44),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              elevation: 4,
+              shadowColor: const Color(0xFF7C3AED).withValues(alpha: 0.35),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        _BottomNavBtn(
+          icon: Icons.person_outline_rounded,
+          label: 'ملفي',
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ProfileScreen()),
+          ),
+        ),
+        if (isAdminUser()) ...[
+          const SizedBox(width: 10),
+          _BottomNavBtn(
+            icon: Icons.admin_panel_settings_rounded,
+            label: 'Admin',
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AdminScreen()),
+            ),
+          ),
+        ],
+      ],
+    );
   }
 
   Future<bool> _onWillPop() async {
@@ -130,238 +306,302 @@ class _HomeScreenState extends State<HomeScreen> {
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
         final shouldExit = await _onWillPop();
-        if (shouldExit) SystemNavigator.pop();
+        if (shouldExit && !kIsWeb) SystemNavigator.pop();
       },
       child: Scaffold(
-      backgroundColor: const Color(0xFFFFF0F7),
-      bottomNavigationBar: SafeArea(
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-          decoration: const BoxDecoration(
-            color: Color(0xFFFFF0F7),
-            border: Border(
-                top: BorderSide(color: Color(0xFFFFCCE8), width: 1)),
-          ),
-          child: Row(
-            children: [
-              // يسار: الأصدقاء
-              _BottomNavBtn(
-                icon: Icons.group_outlined,
-                label: 'الأصدقاء',
-                onTap: () => Navigator.push(context,
-                    MaterialPageRoute(
-                        builder: (_) => const FriendsScreen())),
-              ),
-              const SizedBox(width: 10),
-              // وسط: زر الإعلان
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => Navigator.push(context,
-                      MaterialPageRoute(builder: (_) => const AdScreen())),
-                  icon: const Icon(Icons.campaign_rounded, size: 18),
-                  label: const Text('إضافة إعلان',
-                      style: TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF7C3AED),
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(0, 44),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    elevation: 4,
-                    shadowColor:
-                        const Color(0xFF7C3AED).withValues(alpha: 0.35),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              // يمين: الملف الشخصي
-              _BottomNavBtn(
-                icon: Icons.person_outline_rounded,
-                label: 'ملفي',
-                onTap: () => Navigator.push(context,
-                    MaterialPageRoute(
-                        builder: (_) => const ProfileScreen())),
-              ),
-              if (isAdminUser()) ...[
-                const SizedBox(width: 10),
-                _BottomNavBtn(
-                  icon: Icons.admin_panel_settings_rounded,
-                  label: 'أدمن',
-                  onTap: () => Navigator.push(context,
-                      MaterialPageRoute(
-                          builder: (_) => const AdminScreen())),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFFFFF5FA), Color(0xFFFFF0F7)],
-          ),
-        ),
-        child: CustomScrollView(
-          slivers: [
-            // مسافة الـ status bar
-            const SliverToBoxAdapter(child: SafeArea(bottom: false, child: SizedBox.shrink())),
-
-            // ── Banner Ads ───────────────────────────────────────────
-            const SliverToBoxAdapter(child: _BannerAds()),
-
-            // ── Action buttons (هداية / اشتراك / اسناب) ─────────────
-            const SliverToBoxAdapter(child: _ActionBar()),
-
-            // ── Social links ─────────────────────────────────────────
-            const SliverToBoxAdapter(child: _SocialBar()),
-
-            // ── Search bar ───────────────────────────────────────────
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-                child: Container(
-                  height: 46,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: _query.isNotEmpty
-                          ? const Color(0xFFE91E8C)
-                          : const Color(0xFFFFB3D9),
-                      width: 1.4,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFFE91E8C).withValues(alpha: 0.08),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: TextField(
-                    controller: _searchCtrl,
-                    textDirection: TextDirection.rtl,
-                    style: const TextStyle(
-                        color: Color(0xFF3D0030), fontSize: 14),
-                    decoration: InputDecoration(
-                      hintText: 'ابحث بالاسم أو البيو...',
-                      hintStyle: const TextStyle(
-                          color: Color(0xFFBB8899),
-                          fontSize: 13),
-                      prefixIcon: _query.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.close_rounded,
-                                  color: Color(0xFFE91E8C), size: 18),
-                              onPressed: () {
-                                _searchCtrl.clear();
-                                setState(() => _query = '');
-                              },
-                            )
-                          : null,
-                      suffixIcon: const Icon(Icons.search_rounded,
-                          color: Color(0xFFE91E8C), size: 22),
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 14),
-                    ),
-                    onChanged: (v) => setState(() => _query = v),
-                  ),
-                ),
+        backgroundColor: const Color(0xFFFFF0F7),
+        bottomNavigationBar: SafeArea(
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+            decoration: const BoxDecoration(
+              color: Color(0xFFFFF0F7),
+              border: Border(
+                top: BorderSide(color: Color(0xFFFFCCE8), width: 1),
               ),
             ),
+            child: _buildNavBar(context),
+          ),
+        ),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xFFFFF5FA), Color(0xFFFFF0F7)],
+                ),
+              ),
+              child: CustomScrollView(
+                slivers: [
+                  // مسافة الـ status bar
+                  const SliverToBoxAdapter(
+                    child: SafeArea(bottom: false, child: SizedBox.shrink()),
+                  ),
 
-            // ── Combined feed (ads + profiles) ───────────────────────
-            StreamBuilder<List<FeedItem>>(
-              stream: FirebaseService().combinedFeedStream(),
-              builder: (ctx, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const SliverFillRemaining(
-                    child: Center(
-                      child: CircularProgressIndicator(
-                          color: Color(0xFFE91E8C)),
-                    ),
-                  );
-                }
-                if (snap.hasError) {
-                  return SliverFillRemaining(
-                    child: Center(
-                      child: Text('خطأ: ${snap.error}',
-                          style:
-                              const TextStyle(color: Color(0xFFBB8899))),
-                    ),
-                  );
-                }
+                  // ── Banner Ads ───────────────────────────────────────────
+                  const SliverToBoxAdapter(child: _BannerAds()),
 
-                final all = snap.data ?? [];
-                final items = _filter(all);
+                  // ── Action buttons (هدية / اشتراك / اسناب) ─────────────
+                  const SliverToBoxAdapter(child: _ActionBar()),
 
-                if (all.isEmpty) {
-                  return SliverFillRemaining(child: _emptyState());
-                }
+                  // ── Social links ─────────────────────────────────────────
+                  const SliverToBoxAdapter(child: _SocialBar()),
 
-                if (items.isEmpty) {
-                  return SliverFillRemaining(
-                    child: Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.search_off_rounded,
-                              size: 68,
-                              color: Colors.pink.withValues(alpha: 0.3)),
-                          const SizedBox(height: 14),
-                          Text(
-                            'لا نتائج لـ "$_query"',
-                            style: const TextStyle(
-                                color: Color(0xFFBB8899), fontSize: 15),
+                  // ── Search bar ───────────────────────────────────────────
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                      child: Container(
+                        height: 46,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: _query.isNotEmpty
+                                ? const Color(0xFFE91E8C)
+                                : const Color(0xFFFFB3D9),
+                            width: 1.4,
                           ),
-                        ],
-                      ),
-                    ),
-                  );
-                }
-
-                return SliverPadding(
-                  padding:
-                      const EdgeInsets.fromLTRB(12, 12, 12, 28),
-                  sliver: SliverGrid(
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      crossAxisSpacing: 8,
-                      mainAxisSpacing: 8,
-                      childAspectRatio: 0.72,
-                    ),
-                    delegate: SliverChildBuilderDelegate(
-                      (ctx, i) {
-                        final item = items[i];
-                        return GestureDetector(
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => item.isAd
-                                  ? PostDetailScreen.fromAd(item.ad!)
-                                  : PostDetailScreen.fromProfile(
-                                      item.profile!),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(
+                                0xFFE91E8C,
+                              ).withValues(alpha: 0.08),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: TextField(
+                          controller: _searchCtrl,
+                          textDirection: TextDirection.rtl,
+                          style: const TextStyle(
+                            color: Color(0xFF3D0030),
+                            fontSize: 14,
+                          ),
+                          decoration: InputDecoration(
+                            hintText: 'ابحث بالاسم أو البيو...',
+                            hintStyle: const TextStyle(
+                              color: Color(0xFFBB8899),
+                              fontSize: 13,
+                            ),
+                            prefixIcon: _query.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(
+                                      Icons.close_rounded,
+                                      color: Color(0xFFE91E8C),
+                                      size: 18,
+                                    ),
+                                    onPressed: () {
+                                      _searchCtrl.clear();
+                                      setState(() => _query = '');
+                                    },
+                                  )
+                                : null,
+                            suffixIcon: const Icon(
+                              Icons.search_rounded,
+                              color: Color(0xFFE91E8C),
+                              size: 22,
+                            ),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 14,
                             ),
                           ),
-                          child: item.isAd
-                              ? _AdCard(ad: item.ad!)
-                              : _ProfileCard(user: item.profile!),
-                        );
-                      },
-                      childCount: items.length,
+                          onChanged: (v) => setState(() => _query = v),
+                        ),
+                      ),
                     ),
                   ),
-                );
-              },
+
+                  // ── Username search chip ─────────────────────────────────
+                  if (_isUsernameQuery)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+                        child: GestureDetector(
+                          onTap: _searchByUserId,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(
+                                0xFFE91E8C,
+                              ).withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: const Color(
+                                  0xFFE91E8C,
+                                ).withValues(alpha: 0.4),
+                                width: 1.2,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                _usernameLookupLoading
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          color: Color(0xFFE91E8C),
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        Icons.tag_rounded,
+                                        color: Color(0xFFE91E8C),
+                                        size: 18,
+                                      ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'البحث بالمعرّف: # ${_query.trim()}',
+                                    style: const TextStyle(
+                                      color: Color(0xFFE91E8C),
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                                const Icon(
+                                  Icons.arrow_forward_ios_rounded,
+                                  color: Color(0xFFE91E8C),
+                                  size: 14,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // ── Combined feed (ads + profiles) ───────────────────────
+                  StreamBuilder<List<FeedItem>>(
+                    stream: FirebaseService().combinedFeedStream(),
+                    builder: (ctx, snap) {
+                      if (snap.connectionState == ConnectionState.waiting) {
+                        return const SliverFillRemaining(
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              color: Color(0xFFE91E8C),
+                            ),
+                          ),
+                        );
+                      }
+                      if (snap.hasError) {
+                        return SliverFillRemaining(
+                          child: Center(
+                            child: Text(
+                              'خطأ: ${snap.error}',
+                              style: const TextStyle(color: Color(0xFFBB8899)),
+                            ),
+                          ),
+                        );
+                      }
+
+                      final all = snap.data ?? [];
+                      final items = _filter(all);
+
+                      if (all.isEmpty) {
+                        return SliverFillRemaining(child: _emptyState());
+                      }
+
+                      if (items.isEmpty) {
+                        return SliverFillRemaining(
+                          child: Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.search_off_rounded,
+                                  size: 68,
+                                  color: Colors.pink.withValues(alpha: 0.3),
+                                ),
+                                const SizedBox(height: 14),
+                                Text(
+                                  'لا نتائج لـ "$_query"',
+                                  style: const TextStyle(
+                                    color: Color(0xFFBB8899),
+                                    fontSize: 15,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+
+                      return SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 28),
+                        sliver: SliverGrid(
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                crossAxisSpacing: 8,
+                                mainAxisSpacing: 8,
+                                childAspectRatio: 0.72,
+                              ),
+                          delegate: SliverChildBuilderDelegate((ctx, i) {
+                            final item = items[i];
+                            return GestureDetector(
+                              onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => item.isAd
+                                      ? PostDetailScreen.fromAd(item.ad!)
+                                      : PostDetailScreen.fromProfile(
+                                          item.profile!,
+                                        ),
+                                ),
+                              ),
+                              child: item.isAd
+                                  ? _AdCard(ad: item.ad!)
+                                  : _ProfileCard(user: item.profile!),
+                            );
+                          }, childCount: items.length),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
-      ),
+
+            // ── أيقونة الأدمن الخفية (أعلى اليسار) ─────────────────
+            SafeArea(
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 10, top: 6),
+                  child: GestureDetector(
+                    onTap: _showAdminLogin,
+                    child: Opacity(
+                      opacity: 0.12,
+                      child: Container(
+                        width: 28,
+                        height: 28,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFE91E8C),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.shield_outlined,
+                          color: Colors.white,
+                          size: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ], // Stack children
+        ), // Stack
       ), // Scaffold
     ); // PopScope
   }
@@ -376,27 +616,28 @@ class _HomeScreenState extends State<HomeScreen> {
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [
-                Colors.transparent,
-                Colors.black87,
-              ],
+              colors: [Colors.transparent, Colors.black87],
             ),
           ),
         ),
         const Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.people_outline_rounded,
-                size: 80, color: Colors.white38),
+            Icon(Icons.people_outline_rounded, size: 80, color: Colors.white38),
             SizedBox(height: 20),
-            Text('لا يوجد منشورات بعد',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold)),
+            Text(
+              'لا يوجد منشورات بعد',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
             SizedBox(height: 8),
-            Text('أضف إعلانك الآن ليظهر هنا',
-                style: TextStyle(color: Colors.white60, fontSize: 14)),
+            Text(
+              'أضف إعلانك الآن ليظهر هنا',
+              style: TextStyle(color: Colors.white60, fontSize: 14),
+            ),
           ],
         ),
       ],
@@ -418,12 +659,19 @@ class _AdCardState extends State<_AdCard> {
   int _currentPage = 0;
 
   @override
-  void dispose() { _pageCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    _pageCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _openWhatsapp(String p) async {
     final c = p.replaceAll(RegExp(r'[^\d+]'), '');
-    await launchUrl(Uri.parse('https://wa.me/$c'), mode: LaunchMode.externalApplication);
+    await launchUrl(
+      Uri.parse('https://wa.me/$c'),
+      mode: LaunchMode.externalApplication,
+    );
   }
+
   Future<void> _openLink(String url) async {
     if (url.isEmpty) return;
     final uri = Uri.tryParse(url.startsWith('http') ? url : 'https://$url');
@@ -434,6 +682,7 @@ class _AdCardState extends State<_AdCard> {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
   }
+
   String _username(String u) {
     if (u.startsWith('http')) {
       final uri = Uri.tryParse(u);
@@ -454,8 +703,10 @@ class _AdCardState extends State<_AdCard> {
     if (u.isEmpty) return;
     final name = _username(u);
     try {
-      await launchUrl(Uri.parse('instagram://user?username=$name'),
-          mode: LaunchMode.externalNonBrowserApplication);
+      await launchUrl(
+        Uri.parse('instagram://user?username=$name'),
+        mode: LaunchMode.externalNonBrowserApplication,
+      );
     } catch (_) {
       await _openLink('https://instagram.com/$name');
     }
@@ -465,15 +716,26 @@ class _AdCardState extends State<_AdCard> {
   Widget build(BuildContext context) {
     final ad = widget.ad;
     final photos = ad.photoUrls;
-    final hasSocial = ad.whatsapp.isNotEmpty || ad.facebook.isNotEmpty ||
-        ad.tiktok.isNotEmpty || ad.instagram.isNotEmpty;
+    final hasSocial =
+        ad.whatsapp.isNotEmpty ||
+        ad.facebook.isNotEmpty ||
+        ad.tiktok.isNotEmpty ||
+        ad.instagram.isNotEmpty;
 
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
-          BoxShadow(color: const Color(0xFFE91E8C).withValues(alpha: 0.18), blurRadius: 10, offset: const Offset(0, 4)),
-          BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 8, offset: const Offset(0, 2)),
+          BoxShadow(
+            color: const Color(0xFFE91E8C).withValues(alpha: 0.18),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
         ],
       ),
       child: ClipRRect(
@@ -481,72 +743,188 @@ class _AdCardState extends State<_AdCard> {
         child: Column(
           children: [
             Expanded(
-              child: Stack(fit: StackFit.expand, children: [
-                photos.isEmpty
-                    ? Container(color: const Color(0xFFF8D7E8), child: const Icon(Icons.person, size: 50, color: Color(0xFFE91E8C)))
-                    : PageView.builder(
-                        controller: _pageCtrl,
-                        onPageChanged: (i) => setState(() => _currentPage = i),
-                        itemCount: photos.length,
-                        itemBuilder: (ctx, i) => CachedNetworkImage(
-                          imageUrl: photos[i], fit: BoxFit.cover,
-                          placeholder: (ctx, url) => Container(color: const Color(0xFFF8D7E8),
-                              child: const Center(child: CircularProgressIndicator(color: Color(0xFFE91E8C), strokeWidth: 2))),
-                          errorWidget: (ctx, url, e) => Container(color: const Color(0xFFF8D7E8),
-                              child: const Icon(Icons.broken_image, size: 36, color: Color(0xFFE91E8C))),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  photos.isEmpty
+                      ? Container(
+                          color: const Color(0xFFF8D7E8),
+                          child: const Icon(
+                            Icons.person,
+                            size: 50,
+                            color: Color(0xFFE91E8C),
+                          ),
+                        )
+                      : PageView.builder(
+                          controller: _pageCtrl,
+                          onPageChanged: (i) =>
+                              setState(() => _currentPage = i),
+                          itemCount: photos.length,
+                          itemBuilder: (ctx, i) => CachedNetworkImage(
+                            imageUrl: photos[i],
+                            fit: BoxFit.cover,
+                            placeholder: (ctx, url) => Container(
+                              color: const Color(0xFFF8D7E8),
+                              child: const Center(
+                                child: CircularProgressIndicator(
+                                  color: Color(0xFFE91E8C),
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            ),
+                            errorWidget: (ctx, url, e) => Container(
+                              color: const Color(0xFFF8D7E8),
+                              child: const Icon(
+                                Icons.broken_image,
+                                size: 36,
+                                color: Color(0xFFE91E8C),
+                              ),
+                            ),
+                          ),
+                        ),
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          stops: const [0.0, 0.45, 1.0],
+                          colors: [
+                            Colors.transparent,
+                            Colors.transparent,
+                            Colors.black.withValues(alpha: 0.88),
+                          ],
                         ),
                       ),
-                Positioned.fill(child: DecoratedBox(
-                  decoration: BoxDecoration(gradient: LinearGradient(
-                    begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                    stops: const [0.0, 0.45, 1.0],
-                    colors: [Colors.transparent, Colors.transparent, Colors.black.withValues(alpha: 0.88)],
-                  )),
-                )),
-                if (photos.length > 1)
-                  Positioned(top: 8, left: 0, right: 0,
-                    child: Row(mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(photos.length, (i) => AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        margin: const EdgeInsets.symmetric(horizontal: 2),
-                        width: _currentPage == i ? 14 : 4, height: 3,
-                        decoration: BoxDecoration(
-                          color: _currentPage == i ? const Color(0xFFE91E8C) : Colors.white54,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      )),
                     ),
                   ),
-                Positioned(bottom: 10, left: 8, right: 8,
-                  child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                      Text(ad.name, maxLines: 1, overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold,
-                          shadows: [Shadow(color: Colors.black, blurRadius: 8)])),
-                      if (ad.bio.isNotEmpty)
-                        Text(ad.bio, maxLines: 1, overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: Colors.white.withValues(alpha: 0.82), fontSize: 11,
-                            shadows: const [Shadow(color: Colors.black, blurRadius: 6)])),
-                    ])),
-                    const SizedBox(width: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                      decoration: BoxDecoration(color: const Color(0xFFE91E8C), borderRadius: BorderRadius.circular(20)),
-                      child: Text('${ad.age} سنة', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11)),
+                  if (photos.length > 1)
+                    Positioned(
+                      top: 8,
+                      left: 0,
+                      right: 0,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(
+                          photos.length,
+                          (i) => AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            margin: const EdgeInsets.symmetric(horizontal: 2),
+                            width: _currentPage == i ? 14 : 4,
+                            height: 3,
+                            decoration: BoxDecoration(
+                              color: _currentPage == i
+                                  ? const Color(0xFFE91E8C)
+                                  : Colors.white54,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
-                  ]),
-                ),
-              ]),
+                  Positioned(
+                    bottom: 10,
+                    left: 8,
+                    right: 8,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                ad.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                  shadows: [
+                                    Shadow(color: Colors.black, blurRadius: 8),
+                                  ],
+                                ),
+                              ),
+                              if (ad.bio.isNotEmpty)
+                                Text(
+                                  ad.bio,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.82),
+                                    fontSize: 11,
+                                    shadows: const [
+                                      Shadow(
+                                        color: Colors.black,
+                                        blurRadius: 6,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE91E8C),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            '${ad.age} سنة',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
             if (hasSocial)
-              Container(height: 38, color: const Color(0xFF2D0022),
+              Container(
+                height: 38,
+                color: const Color(0xFF2D0022),
                 padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-                  if (ad.whatsapp.isNotEmpty) _MiniBtn(icon: Icons.chat_rounded, color: const Color(0xFF25D366), onTap: () => _openWhatsapp(ad.whatsapp)),
-                  if (ad.facebook.isNotEmpty) _MiniBtn(icon: Icons.facebook_rounded, color: const Color(0xFF1877F2), onTap: () => _openLink(ad.facebook)),
-                  if (ad.tiktok.isNotEmpty) _MiniBtn(icon: Icons.music_note_rounded, color: Colors.white, onTap: () => _openTiktok(ad.tiktok)),
-                  if (ad.instagram.isNotEmpty) _MiniBtn(icon: Icons.camera_alt_rounded, color: const Color(0xFFE1306C), onTap: () => _openInstagram(ad.instagram)),
-                ]),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    if (ad.whatsapp.isNotEmpty)
+                      _MiniBtn(
+                        icon: Icons.chat_rounded,
+                        color: const Color(0xFF25D366),
+                        onTap: () => _openWhatsapp(ad.whatsapp),
+                      ),
+                    if (ad.facebook.isNotEmpty)
+                      _MiniBtn(
+                        icon: Icons.facebook_rounded,
+                        color: const Color(0xFF1877F2),
+                        onTap: () => _openLink(ad.facebook),
+                      ),
+                    if (ad.tiktok.isNotEmpty)
+                      _MiniBtn(
+                        icon: Icons.music_note_rounded,
+                        color: Colors.white,
+                        onTap: () => _openTiktok(ad.tiktok),
+                      ),
+                    if (ad.instagram.isNotEmpty)
+                      _MiniBtn(
+                        icon: Icons.camera_alt_rounded,
+                        color: const Color(0xFFE1306C),
+                        onTap: () => _openInstagram(ad.instagram),
+                      ),
+                  ],
+                ),
               ),
           ],
         ),
@@ -577,14 +955,15 @@ class _ProfileCardState extends State<_ProfileCard> {
 
   Future<void> _openWhatsapp(String phone) async {
     final clean = phone.replaceAll(RegExp(r'[^\d+]'), '');
-    await launchUrl(Uri.parse('https://wa.me/$clean'),
-        mode: LaunchMode.externalApplication);
+    await launchUrl(
+      Uri.parse('https://wa.me/$clean'),
+      mode: LaunchMode.externalApplication,
+    );
   }
 
   Future<void> _openLink(String url) async {
     if (url.isEmpty) return;
-    final uri =
-        Uri.tryParse(url.startsWith('http') ? url : 'https://$url');
+    final uri = Uri.tryParse(url.startsWith('http') ? url : 'https://$url');
     if (uri != null) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
@@ -610,8 +989,10 @@ class _ProfileCardState extends State<_ProfileCard> {
     if (u.isEmpty) return;
     final name = _username(u);
     try {
-      await launchUrl(Uri.parse('instagram://user?username=$name'),
-          mode: LaunchMode.externalNonBrowserApplication);
+      await launchUrl(
+        Uri.parse('instagram://user?username=$name'),
+        mode: LaunchMode.externalNonBrowserApplication,
+      );
     } catch (_) {
       await _openLink('https://instagram.com/$name');
     }
@@ -621,7 +1002,8 @@ class _ProfileCardState extends State<_ProfileCard> {
   Widget build(BuildContext context) {
     final user = widget.user;
     final photos = user.photoUrls;
-    final hasSocial = user.whatsapp.isNotEmpty ||
+    final hasSocial =
+        user.whatsapp.isNotEmpty ||
         user.facebook.isNotEmpty ||
         user.tiktok.isNotEmpty ||
         user.instagram.isNotEmpty;
@@ -653,8 +1035,11 @@ class _ProfileCardState extends State<_ProfileCard> {
                   photos.isEmpty
                       ? Container(
                           color: const Color(0xFFF8D7E8),
-                          child: const Icon(Icons.person,
-                              size: 50, color: Color(0xFFE91E8C)),
+                          child: const Icon(
+                            Icons.person,
+                            size: 50,
+                            color: Color(0xFFE91E8C),
+                          ),
                         )
                       : PageView.builder(
                           controller: _pageCtrl,
@@ -668,14 +1053,18 @@ class _ProfileCardState extends State<_ProfileCard> {
                               color: const Color(0xFFF8D7E8),
                               child: const Center(
                                 child: CircularProgressIndicator(
-                                    color: Color(0xFFE91E8C),
-                                    strokeWidth: 2),
+                                  color: Color(0xFFE91E8C),
+                                  strokeWidth: 2,
+                                ),
                               ),
                             ),
                             errorWidget: (ctx, url, e) => Container(
                               color: const Color(0xFFF8D7E8),
-                              child: const Icon(Icons.broken_image,
-                                  size: 36, color: Color(0xFFE91E8C)),
+                              child: const Icon(
+                                Icons.broken_image,
+                                size: 36,
+                                color: Color(0xFFE91E8C),
+                              ),
                             ),
                           ),
                         ),
@@ -707,8 +1096,7 @@ class _ProfileCardState extends State<_ProfileCard> {
                         children: List.generate(photos.length, (i) {
                           return AnimatedContainer(
                             duration: const Duration(milliseconds: 200),
-                            margin:
-                                const EdgeInsets.symmetric(horizontal: 2),
+                            margin: const EdgeInsets.symmetric(horizontal: 2),
                             width: _currentPage == i ? 14 : 4,
                             height: 3,
                             decoration: BoxDecoration(
@@ -739,8 +1127,7 @@ class _ProfileCardState extends State<_ProfileCard> {
                               fontSize: 14,
                               fontWeight: FontWeight.bold,
                               shadows: [
-                                Shadow(
-                                    color: Colors.black, blurRadius: 8)
+                                Shadow(color: Colors.black, blurRadius: 8),
                               ],
                             ),
                           ),
@@ -748,7 +1135,9 @@ class _ProfileCardState extends State<_ProfileCard> {
                         const SizedBox(width: 4),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 3),
+                            horizontal: 6,
+                            vertical: 3,
+                          ),
                           decoration: BoxDecoration(
                             color: const Color(0xFFE91E8C),
                             borderRadius: BorderRadius.circular(20),
@@ -815,8 +1204,11 @@ class _MiniBtn extends StatelessWidget {
   final IconData icon;
   final Color color;
   final VoidCallback onTap;
-  const _MiniBtn(
-      {required this.icon, required this.color, required this.onTap});
+  const _MiniBtn({
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -828,8 +1220,7 @@ class _MiniBtn extends StatelessWidget {
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.15),
           shape: BoxShape.circle,
-          border:
-              Border.all(color: color.withValues(alpha: 0.45), width: 1),
+          border: Border.all(color: color.withValues(alpha: 0.45), width: 1),
         ),
         child: Icon(icon, color: color, size: 16),
       ),
@@ -843,8 +1234,11 @@ class _BottomNavBtn extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  const _BottomNavBtn(
-      {required this.icon, required this.label, required this.onTap});
+  const _BottomNavBtn({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -863,11 +1257,14 @@ class _BottomNavBtn extends StatelessWidget {
           children: [
             Icon(icon, color: const Color(0xFFE91E8C), size: 20),
             const SizedBox(height: 1),
-            Text(label,
-                style: const TextStyle(
-                    color: Color(0xFFE91E8C),
-                    fontSize: 9,
-                    fontWeight: FontWeight.w600)),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFFE91E8C),
+                fontSize: 9,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
       ),
@@ -882,8 +1279,9 @@ class _ActionBar extends StatelessWidget {
 
   static Future<void> _open(BuildContext ctx, String url) async {
     if (url.isEmpty) {
-      ScaffoldMessenger.of(ctx).showSnackBar(
-          const SnackBar(content: Text('لم يُضف الرابط بعد')));
+      ScaffoldMessenger.of(
+        ctx,
+      ).showSnackBar(const SnackBar(content: Text('لم يُضف الرابط بعد')));
       return;
     }
     final uri = Uri.tryParse(url.startsWith('http') ? url : 'https://$url');
@@ -904,9 +1302,9 @@ class _ActionBar extends StatelessWidget {
           .snapshots(),
       builder: (ctx, snap) {
         final data = snap.data?.data() as Map<String, dynamic>? ?? {};
-        final giftUrl     = (data['gift']         as String? ?? '').trim();
-        final subUrl      = (data['subscription'] as String? ?? '').trim();
-        final snapchatUrl = (data['snapchat']     as String? ?? '').trim();
+        final giftUrl = (data['gift'] as String? ?? '').trim();
+        final subUrl = (data['subscription'] as String? ?? '').trim();
+        final snapchatUrl = (data['snapchat'] as String? ?? '').trim();
 
         return Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
@@ -953,12 +1351,13 @@ class _ActionBtn extends StatelessWidget {
   final Color color;
   final VoidCallback onTap;
   final String? flag;
-  const _ActionBtn(
-      {required this.label,
-      required this.icon,
-      required this.color,
-      required this.onTap,
-      this.flag});
+  const _ActionBtn({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+    this.flag,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -991,10 +1390,11 @@ class _ActionBtn extends StatelessWidget {
               label,
               textAlign: TextAlign.center,
               style: TextStyle(
-                  color: color,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  height: 1.3),
+                color: color,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                height: 1.3,
+              ),
             ),
           ],
         ),
@@ -1035,18 +1435,33 @@ class _SocialBar extends StatelessWidget {
 
         final buttons = <Widget>[
           if (wa.isNotEmpty)
-            _SocialBtn(label: 'واتساب', color: const Color(0xFF25D366),
-                icon: Icons.chat_rounded,
-                onTap: () => _open('https://wa.me/$wa')),
+            _SocialBtn(
+              label: 'واتساب',
+              color: const Color(0xFF25D366),
+              icon: Icons.chat_rounded,
+              onTap: () => _open('https://wa.me/$wa'),
+            ),
           if (fb.isNotEmpty)
-            _SocialBtn(label: 'فيسبوك', color: const Color(0xFF1877F2),
-                icon: Icons.facebook_rounded, onTap: () => _open(fb)),
+            _SocialBtn(
+              label: 'فيسبوك',
+              color: const Color(0xFF1877F2),
+              icon: Icons.facebook_rounded,
+              onTap: () => _open(fb),
+            ),
           if (tt.isNotEmpty)
-            _SocialBtn(label: 'تيكتوك', color: Colors.black,
-                icon: Icons.music_note_rounded, onTap: () => _open(tt)),
+            _SocialBtn(
+              label: 'تيكتوك',
+              color: Colors.black,
+              icon: Icons.music_note_rounded,
+              onTap: () => _open(tt),
+            ),
           if (ig.isNotEmpty)
-            _SocialBtn(label: 'انستغرام', color: const Color(0xFFE1306C),
-                icon: Icons.camera_alt_rounded, onTap: () => _open(ig)),
+            _SocialBtn(
+              label: 'انستغرام',
+              color: const Color(0xFFE1306C),
+              icon: Icons.camera_alt_rounded,
+              onTap: () => _open(ig),
+            ),
         ];
 
         if (buttons.isEmpty) return const SizedBox.shrink();
@@ -1068,11 +1483,12 @@ class _SocialBtn extends StatelessWidget {
   final Color color;
   final IconData icon;
   final VoidCallback onTap;
-  const _SocialBtn(
-      {required this.label,
-      required this.color,
-      required this.icon,
-      required this.onTap});
+  const _SocialBtn({
+    required this.label,
+    required this.color,
+    required this.icon,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1091,11 +1507,14 @@ class _SocialBtn extends StatelessWidget {
           children: [
             Icon(icon, color: color, size: 22),
             const SizedBox(height: 3),
-            Text(label,
-                style: TextStyle(
-                    color: color,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700)),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ],
         ),
       ),
@@ -1136,27 +1555,33 @@ class _BannerAdsState extends State<_BannerAds> {
         .collection('banner_ads')
         .where('active', isEqualTo: true)
         .snapshots()
-        .listen((snap) {
-      if (!mounted) return;
+        .listen(
+          (snap) {
+            if (!mounted) return;
 
-      final docs = [...snap.docs]
-        ..sort((a, b) => _toInt((a.data())['order'])
-            .compareTo(_toInt((b.data())['order'])));
+            final docs = [...snap.docs]
+              ..sort(
+                (a, b) => _toInt(
+                  (a.data())['order'],
+                ).compareTo(_toInt((b.data())['order'])),
+              );
 
-      final urls = docs
-          .map((d) => (d.data()['imageUrl'] as String?) ?? '')
-          .where((u) => u.isNotEmpty)
-          .toList();
+            final urls = docs
+                .map((d) => (d.data()['imageUrl'] as String?) ?? '')
+                .where((u) => u.isNotEmpty)
+                .toList();
 
-      setState(() {
-        _urls = urls;
-        _loading = false;
-      });
+            setState(() {
+              _urls = urls;
+              _loading = false;
+            });
 
-      _restartTimer();
-    }, onError: (_) {
-      if (mounted) setState(() => _loading = false);
-    });
+            _restartTimer();
+          },
+          onError: (_) {
+            if (mounted) setState(() => _loading = false);
+          },
+        );
   }
 
   void _restartTimer() {
@@ -1192,7 +1617,9 @@ class _BannerAdsState extends State<_BannerAds> {
         height: 180,
         child: Center(
           child: CircularProgressIndicator(
-              color: Color(0xFFE91E8C), strokeWidth: 2),
+            color: Color(0xFFE91E8C),
+            strokeWidth: 2,
+          ),
         ),
       );
     }
@@ -1221,13 +1648,18 @@ class _BannerAdsState extends State<_BannerAds> {
                     color: const Color(0xFF2D0022),
                     child: const Center(
                       child: CircularProgressIndicator(
-                          color: Color(0xFFE91E8C), strokeWidth: 2),
+                        color: Color(0xFFE91E8C),
+                        strokeWidth: 2,
+                      ),
                     ),
                   ),
                   errorWidget: (ctx, url, e) => Container(
                     color: const Color(0xFF2D0022),
-                    child: const Icon(Icons.broken_image,
-                        color: Colors.white24, size: 40),
+                    child: const Icon(
+                      Icons.broken_image,
+                      color: Colors.white24,
+                      size: 40,
+                    ),
                   ),
                 ),
               ),
@@ -1264,3 +1696,128 @@ class _BannerAdsState extends State<_BannerAds> {
   }
 }
 
+// ─── Admin PIN dialog ─────────────────────────────────────────────────────────
+
+class _HomePinDialog extends StatefulWidget {
+  const _HomePinDialog();
+
+  @override
+  State<_HomePinDialog> createState() => _HomePinDialogState();
+}
+
+class _HomePinDialogState extends State<_HomePinDialog> {
+  final _pinCtrl = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _pinCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final pin = _pinCtrl.text.trim();
+    if (pin.isEmpty) {
+      setState(() => _error = 'أدخل الرقم السري');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (!mounted) return;
+    if (pin == kAdminPin) {
+      if (FirebaseAuth.instance.currentUser == null) {
+        await FirebaseAuth.instance.signInAnonymously();
+      }
+      await grantPinAdmin();
+      if (mounted) Navigator.pop(context, true);
+    } else {
+      setState(() {
+        _loading = false;
+        _error = 'الرقم السري غير صحيح';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Row(
+        children: [
+          Icon(Icons.admin_panel_settings_rounded, color: Color(0xFFE91E8C)),
+          SizedBox(width: 8),
+          Text(
+            'دخول الأدمن',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _pinCtrl,
+            obscureText: true,
+            textDirection: TextDirection.ltr,
+            autofocus: true,
+            onSubmitted: (_) => _submit(),
+            decoration: InputDecoration(
+              labelText: 'الرقم السري',
+              prefixIcon: const Icon(
+                Icons.lock_outline,
+                color: Color(0xFFE91E8C),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(
+                  color: Color(0xFFE91E8C),
+                  width: 2,
+                ),
+              ),
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _error!,
+              style: const TextStyle(color: Colors.red, fontSize: 12),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _loading ? null : () => Navigator.pop(context, false),
+          child: const Text('إلغاء'),
+        ),
+        ElevatedButton(
+          onPressed: _loading ? null : _submit,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFFE91E8C),
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          child: _loading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+              : const Text('دخول'),
+        ),
+      ],
+    );
+  }
+}

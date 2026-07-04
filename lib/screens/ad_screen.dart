@@ -1,11 +1,11 @@
 import 'dart:io' show File;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/ad_model.dart';
 import '../services/firebase_service.dart';
-import 'home_screen.dart';
 
 class AdScreen extends StatefulWidget {
   const AdScreen({super.key});
@@ -16,18 +16,20 @@ class AdScreen extends StatefulWidget {
 
 class _AdScreenState extends State<AdScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _nameCtrl = TextEditingController();
-  final _ageCtrl = TextEditingController();
-  final _bioCtrl = TextEditingController();
+  final _nameCtrl     = TextEditingController();
+  final _ageCtrl      = TextEditingController();
+  final _bioCtrl      = TextEditingController();
   final _whatsappCtrl = TextEditingController();
   final _facebookCtrl = TextEditingController();
-  final _tiktokCtrl = TextEditingController();
+  final _tiktokCtrl   = TextEditingController();
   final _instagramCtrl = TextEditingController();
 
   final List<XFile?> _localPhotos = List.filled(5, null);
   final List<String> _existingUrls = List.filled(5, '');
   bool _saving = false;
   bool _initialLoading = true;
+  bool _wasPublished = false;
+  bool _isPending = false;
 
   @override
   void initState() {
@@ -57,37 +59,36 @@ class _AdScreenState extends State<AdScreen> {
       final ad = await FirebaseService().getAd(authUser.uid);
       if (mounted && ad != null) {
         setState(() {
-          _nameCtrl.text = ad.name;
-          _ageCtrl.text = ad.age > 0 ? ad.age.toString() : '';
-          _bioCtrl.text = ad.bio;
+          _nameCtrl.text     = ad.name;
+          _ageCtrl.text      = ad.age > 0 ? ad.age.toString() : '';
+          _bioCtrl.text      = ad.bio;
           _whatsappCtrl.text = ad.whatsapp;
           _facebookCtrl.text = ad.facebook;
-          _tiktokCtrl.text = ad.tiktok;
+          _tiktokCtrl.text   = ad.tiktok;
           _instagramCtrl.text = ad.instagram;
+          _wasPublished      = ad.published;
+          _isPending         = ad.pendingPublish;
           for (int i = 0; i < ad.photoUrls.length && i < 5; i++) {
             _existingUrls[i] = ad.photoUrls[i];
           }
         });
         return;
       }
+      // ملء من الملف الشخصي إن لم يكن له إعلان
       final profile = await FirebaseService().getUser(authUser.uid);
       if (mounted && profile != null) {
         setState(() {
-          _nameCtrl.text = profile.name;
-          _ageCtrl.text = profile.age > 0 ? profile.age.toString() : '';
-          _bioCtrl.text = profile.bio;
-          _whatsappCtrl.text = profile.whatsapp;
-          _facebookCtrl.text = profile.facebook;
-          _tiktokCtrl.text = profile.tiktok;
+          _nameCtrl.text      = profile.name;
+          _ageCtrl.text       = profile.age > 0 ? profile.age.toString() : '';
+          _bioCtrl.text       = profile.bio;
+          _whatsappCtrl.text  = profile.whatsapp;
+          _facebookCtrl.text  = profile.facebook;
+          _tiktokCtrl.text    = profile.tiktok;
           _instagramCtrl.text = profile.instagram;
           for (int i = 0; i < profile.photoUrls.length && i < 5; i++) {
             _existingUrls[i] = profile.photoUrls[i];
           }
         });
-      } else if (mounted &&
-          authUser.displayName != null &&
-          authUser.displayName!.isNotEmpty) {
-        setState(() => _nameCtrl.text = authUser.displayName!);
       }
     } finally {
       if (mounted) setState(() => _initialLoading = false);
@@ -95,24 +96,25 @@ class _AdScreenState extends State<AdScreen> {
   }
 
   Future<void> _pickPhoto(int index) async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1080,
-      imageQuality: 85,
-    );
-    if (picked != null && mounted) {
-      setState(() => _localPhotos[index] = picked);
-    }
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery, maxWidth: 1080, imageQuality: 85);
+    if (picked != null && mounted) setState(() => _localPhotos[index] = picked);
   }
 
   void _removePhoto(int index) {
-    setState(() {
-      _localPhotos[index] = null;
-      _existingUrls[index] = '';
-    });
+    setState(() { _localPhotos[index] = null; _existingUrls[index] = ''; });
   }
 
+  bool get _isComplete {
+    final name = _nameCtrl.text.trim();
+    final age  = int.tryParse(_ageCtrl.text.trim()) ?? 0;
+    final bio  = _bioCtrl.text.trim();
+    final hasPhoto = _existingUrls.any((u) => u.isNotEmpty) ||
+        _localPhotos.any((f) => f != null);
+    return name.isNotEmpty && age >= 18 && bio.isNotEmpty && hasPhoto;
+  }
+
+  // ── حفظ المسودة فقط (بدون نشر) ─────────────────────────────────────────────
   Future<void> _save() async {
     if (FirebaseAuth.instance.currentUser == null) return;
     if (!_formKey.currentState!.validate()) return;
@@ -120,12 +122,10 @@ class _AdScreenState extends State<AdScreen> {
     final hasPhoto = _localPhotos.any((f) => f != null) ||
         _existingUrls.any((u) => u.isNotEmpty);
     if (!hasPhoto) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('يرجى إضافة صورة واحدة على الأقل'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('يرجى إضافة صورة واحدة على الأقل'),
+        backgroundColor: Colors.orange,
+      ));
       return;
     }
 
@@ -144,49 +144,80 @@ class _AdScreenState extends State<AdScreen> {
       }
 
       final photoUrls = finalUrls.where((u) => u.isNotEmpty).toList();
-      final name = _nameCtrl.text.trim();
-      final age = int.tryParse(_ageCtrl.text.trim()) ?? 0;
-      final bio = _bioCtrl.text.trim();
 
       final ad = AdModel(
         uid: uid,
-        name: name,
-        age: age,
-        bio: bio,
+        name: _nameCtrl.text.trim(),
+        age: int.tryParse(_ageCtrl.text.trim()) ?? 0,
+        bio: _bioCtrl.text.trim(),
         whatsapp: _whatsappCtrl.text.trim(),
         facebook: _facebookCtrl.text.trim(),
         tiktok: _tiktokCtrl.text.trim(),
         instagram: _instagramCtrl.text.trim(),
         photoUrls: photoUrls,
-        published: name.isNotEmpty && age > 0 && bio.isNotEmpty && photoUrls.isNotEmpty,
+        published: _wasPublished,
+        pendingPublish: _isPending,
       );
 
       await service.saveAd(ad);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تم نشر الإعلان بنجاح ✓'),
-          backgroundColor: Colors.green,
-          duration: Duration(seconds: 2),
-        ),
-      );
-
-      if (ad.published) {
-        await Future.delayed(const Duration(seconds: 1));
-        if (mounted) {
-          Navigator.pushReplacement(
-              context, MaterialPageRoute(builder: (_) => const HomeScreen()));
-        }
+      // تحديث URLs المحلية
+      for (int i = 0; i < photoUrls.length && i < 5; i++) {
+        _existingUrls[i] = photoUrls[i];
+        _localPhotos[i] = null;
       }
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('تم حفظ الإعلان ✓'),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 2),
+      ));
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
-        );
+          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  // ── طلب النشر ───────────────────────────────────────────────────────────────
+  Future<void> _requestPublish() async {
+    if (!_isComplete) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('أكمل إعلانك أولاً (اسم، عمر، بيو، صورة)'),
+        backgroundColor: Colors.orange,
+      ));
+      return;
+    }
+    // احفظ أولاً ثم اطلب
+    await _save();
+    if (!mounted) return;
+
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    setState(() => _saving = true);
+    try {
+      await FirebaseFirestore.instance.collection('ads').doc(uid).update({
+        'pendingPublish': true,
+        'requestedAt': FieldValue.serverTimestamp(),
+      });
+      if (mounted) {
+        setState(() { _isPending = true; _saving = false; });
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('تم إرسال الطلب ✓ انتظر موافقة الأدمن'),
+          backgroundColor: Color(0xFF7C3AED),
+          duration: Duration(seconds: 3),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red));
+      }
     }
   }
 
@@ -220,7 +251,7 @@ class _AdScreenState extends State<AdScreen> {
         actions: [
           TextButton(
             onPressed: _saving ? null : _save,
-            child: const Text('نشر',
+            child: const Text('حفظ',
                 style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -235,8 +266,7 @@ class _AdScreenState extends State<AdScreen> {
                 children: [
                   CircularProgressIndicator(color: Color(0xFFE91E8C)),
                   SizedBox(height: 16),
-                  Text('جاري رفع الصور والنشر...',
-                      style: TextStyle(fontSize: 15)),
+                  Text('جاري الحفظ...', style: TextStyle(fontSize: 15)),
                 ],
               ),
             )
@@ -245,7 +275,7 @@ class _AdScreenState extends State<AdScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  // ─── Photos ───
+                  // ─── صور ──────────────────────────────────────────────
                   _SectionCard(
                     title: 'الصور (حد أقصى 5 صور)',
                     child: SizedBox(
@@ -264,7 +294,7 @@ class _AdScreenState extends State<AdScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // ─── Basic info ───
+                  // ─── معلومات أساسية ────────────────────────────────────
                   _SectionCard(
                     title: 'المعلومات الأساسية',
                     child: Column(
@@ -307,7 +337,7 @@ class _AdScreenState extends State<AdScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // ─── Social ───
+                  // ─── وسائل التواصل ─────────────────────────────────────
                   _SectionCard(
                     title: 'وسائل التواصل الاجتماعي',
                     child: Column(
@@ -346,12 +376,13 @@ class _AdScreenState extends State<AdScreen> {
                   ),
                   const SizedBox(height: 24),
 
+                  // ─── زر الحفظ ──────────────────────────────────────────
                   ElevatedButton.icon(
                     onPressed: _saving ? null : _save,
-                    icon: const Icon(Icons.campaign_rounded, size: 22),
-                    label: const Text('نشر الإعلان',
-                        style: TextStyle(
-                            fontSize: 17, fontWeight: FontWeight.bold)),
+                    icon: const Icon(Icons.save_rounded, size: 22),
+                    label: const Text('حفظ الإعلان',
+                        style:
+                            TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFE91E8C),
                       foregroundColor: Colors.white,
@@ -361,6 +392,14 @@ class _AdScreenState extends State<AdScreen> {
                       elevation: 4,
                     ),
                   ),
+                  const SizedBox(height: 12),
+
+                  // ─── بطاقة الحالة + زر طلب النشر ──────────────────────
+                  _AdStatusCard(
+                    isPublished: _wasPublished,
+                    isPending: _isPending,
+                    onRequest: _saving ? null : _requestPublish,
+                  ),
                   const SizedBox(height: 32),
                 ],
               ),
@@ -368,6 +407,133 @@ class _AdScreenState extends State<AdScreen> {
     );
   }
 }
+
+// ─── Ad Status Card ───────────────────────────────────────────────────────────
+
+class _AdStatusCard extends StatelessWidget {
+  final bool isPublished;
+  final bool isPending;
+  final VoidCallback? onRequest;
+  const _AdStatusCard(
+      {required this.isPublished,
+      required this.isPending,
+      required this.onRequest});
+
+  @override
+  Widget build(BuildContext context) {
+    if (isPublished) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE8FFF0),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFF22C55E), width: 1.2),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.check_circle_rounded,
+                color: Color(0xFF22C55E), size: 26),
+            SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('إعلانك منشور ✓',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF166534),
+                          fontSize: 15)),
+                  SizedBox(height: 2),
+                  Text('يظهر إعلانك للجميع في الصفحة الرئيسية',
+                      style:
+                          TextStyle(color: Color(0xFF15803D), fontSize: 12)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (isPending) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5F0FF),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFF7C3AED), width: 1.2),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.hourglass_top_rounded,
+                color: Color(0xFF7C3AED), size: 26),
+            SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('بانتظار موافقة الأدمن',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF4C1D95),
+                          fontSize: 15)),
+                  SizedBox(height: 2),
+                  Text('تم إرسال طلبك، سيتم مراجعته قريباً',
+                      style:
+                          TextStyle(color: Color(0xFF6D28D9), fontSize: 12)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF9F0),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+                color: Colors.orange.withValues(alpha: 0.5), width: 1.2),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.info_outline_rounded, color: Colors.orange, size: 22),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'إعلانك غير منشور — احفظه كاملاً ثم اضغط "طلب النشر"',
+                  style: TextStyle(color: Colors.orange, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        ElevatedButton.icon(
+          onPressed: onRequest,
+          icon: const Icon(Icons.send_rounded, size: 20),
+          label: const Text('طلب النشر',
+              style:
+                  TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF7C3AED),
+            foregroundColor: Colors.white,
+            minimumSize: const Size(double.infinity, 52),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14)),
+            elevation: 3,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── Section Card ─────────────────────────────────────────────────────────────
 
 class _SectionCard extends StatelessWidget {
   final String title;
@@ -398,12 +564,13 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
+// ─── Photo Slot ───────────────────────────────────────────────────────────────
+
 class _PhotoSlot extends StatelessWidget {
   final XFile? localFile;
   final String existingUrl;
   final VoidCallback onPick;
   final VoidCallback onRemove;
-
   const _PhotoSlot({
     required this.localFile,
     required this.existingUrl,
@@ -414,7 +581,6 @@ class _PhotoSlot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasPhoto = localFile != null || existingUrl.isNotEmpty;
-
     return Container(
       width: 110,
       margin: const EdgeInsets.only(right: 10),
@@ -428,7 +594,8 @@ class _PhotoSlot extends StatelessWidget {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(14),
                 color: Colors.grey[200],
-                border: Border.all(color: const Color(0xFFE91E8C), width: 1.5),
+                border:
+                    Border.all(color: const Color(0xFFE91E8C), width: 1.5),
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(13),
@@ -443,7 +610,7 @@ class _PhotoSlot extends StatelessWidget {
                             fit: BoxFit.cover,
                             width: 110,
                             height: 130,
-                            errorBuilder: (ctx2, e2, st2) => const Icon(
+                            errorBuilder: (_, _, _) => const Icon(
                                 Icons.broken_image,
                                 color: Colors.grey)))
                     : const Column(
@@ -453,8 +620,8 @@ class _PhotoSlot extends StatelessWidget {
                               size: 36, color: Color(0xFFE91E8C)),
                           SizedBox(height: 6),
                           Text('إضافة صورة',
-                              style:
-                                  TextStyle(fontSize: 11, color: Colors.grey)),
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.grey)),
                         ],
                       ),
               ),
@@ -470,7 +637,8 @@ class _PhotoSlot extends StatelessWidget {
                   decoration: const BoxDecoration(
                       color: Colors.red, shape: BoxShape.circle),
                   padding: const EdgeInsets.all(3),
-                  child: const Icon(Icons.close, size: 14, color: Colors.white),
+                  child:
+                      const Icon(Icons.close, size: 14, color: Colors.white),
                 ),
               ),
             ),

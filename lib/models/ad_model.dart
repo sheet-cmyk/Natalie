@@ -9,6 +9,7 @@ class AdModel {
   String instagram;
   List<String> photoUrls;
   bool published;
+  bool pendingPublish;
 
   AdModel({
     required this.uid,
@@ -21,6 +22,7 @@ class AdModel {
     this.instagram = '',
     this.photoUrls = const [],
     this.published = false,
+    this.pendingPublish = false,
   });
 
   bool get isComplete =>
@@ -36,6 +38,7 @@ class AdModel {
         'instagram': instagram,
         'photoUrls': photoUrls,
         'published': published,
+        'pendingPublish': pendingPublish,
       };
 
   factory AdModel.fromMap(String uid, Map<String, dynamic> map) => AdModel(
@@ -51,5 +54,6 @@ class AdModel {
         instagram: map['instagram'] as String? ?? '',
         photoUrls: List<String>.from(map['photoUrls'] as List? ?? []),
         published: map['published'] as bool? ?? false,
+        pendingPublish: map['pendingPublish'] as bool? ?? false,
       );
 }
