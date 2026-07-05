@@ -7,7 +7,7 @@
         android:maxSdkVersion="32"/>
 
     <application
-        android:label="OM Natalie"
+        android:label="لقاء LIQAA"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

@@ -1,11 +1,11 @@
 {
-    "name": "OM Natalie",
-    "short_name": "OM Natalie",
+    "name": "لقاء LIQAA",
+    "short_name": "LIQAA",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#1A0012",
     "theme_color": "#E91E8C",
-    "description": "OM Natalie - تطبيق التواصل الاجتماعي",
+    "description": "لقاء LIQAA - تطبيق التواصل الاجتماعي",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

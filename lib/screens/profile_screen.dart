@@ -3,7 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
-import 'admin_screen.dart' show isAdminUser;
+import 'admin_screen.dart' show isAdminUser, resetAdminState;
 import 'auth_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -124,6 +124,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
     if (ok != true || !mounted) return;
+    resetAdminState();
     await FirebaseAuth.instance.signOut();
     if (mounted) {
       Navigator.pushAndRemoveUntil(context,

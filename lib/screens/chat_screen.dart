@@ -29,30 +29,52 @@ class _ChatScreenState extends State<ChatScreen> {
   String _myName = '';
   String _myPhoto = '';
   bool _sending = false;
+  late Future<void> _identityFuture;
 
   @override
   void initState() {
     super.initState();
-    _loadMyIdentity();
+    _identityFuture = _loadMyIdentity();
+    _markAsRead();
   }
 
   Future<void> _loadMyIdentity() async {
-    if (isAdminUser()) {
-      final snap = await _db.collection('config').doc('admin_profile').get();
-      final data = snap.data() ?? {};
+    final snap = await _db.collection('users').doc(widget.myUid).get();
+    if (snap.exists) {
+      final data = snap.data()!;
+      final name     = (data['name']     as String?)?.trim() ?? '';
+      final username = (data['username'] as String?)?.trim() ?? '';
+      _myName  = name.isNotEmpty ? name : (username.isNotEmpty ? username : 'مستخدم');
+      final photos = List<String>.from(data['photoUrls'] ?? []);
+      _myPhoto = photos.isNotEmpty ? photos.first : '';
+    } else if (isAdminUser()) {
+      final adminSnap = await _db.collection('config').doc('admin_profile').get();
+      final data = adminSnap.data() ?? {};
       final name = (data['name'] as String?)?.trim() ?? '';
-      if (mounted) {
-        _myName = name.isEmpty ? 'Admin' : name;
-        _myPhoto = data['photoUrl'] as String? ?? '';
-      }
+      _myName  = name.isNotEmpty ? name : 'Admin';
+      _myPhoto = data['photoUrl'] as String? ?? '';
     } else {
-      final snap = await _db.collection('users').doc(widget.myUid).get();
-      final data = snap.data() ?? {};
-      if (mounted) {
-        _myName = (data['name'] as String?) ?? 'مستخدم';
-        _myPhoto = '';
-      }
+      _myName  = 'مستخدم';
+      _myPhoto = '';
     }
+  }
+
+  Future<void> _markAsRead() async {
+    try {
+      final unread = await _db
+          .collection('chats')
+          .doc(widget.chatId)
+          .collection('messages')
+          .where('from', isEqualTo: widget.friendUid)
+          .where('read', isEqualTo: false)
+          .get();
+      if (unread.docs.isEmpty) return;
+      final batch = _db.batch();
+      for (final doc in unread.docs) {
+        batch.update(doc.reference, {'read': true});
+      }
+      await batch.commit();
+    } catch (_) {}
   }
 
   @override
@@ -67,6 +89,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty || _sending) return;
     setState(() => _sending = true);
     _textCtrl.clear();
+    await _identityFuture;
 
     final batch = _db.batch();
 
@@ -80,6 +103,7 @@ class _ChatScreenState extends State<ChatScreen> {
         'from': widget.myUid,
         'text': text,
         'createdAt': FieldValue.serverTimestamp(),
+        'read': false,
       },
     );
 
@@ -201,18 +225,49 @@ class _ChatScreenState extends State<ChatScreen> {
                         style: TextStyle(color: Color(0xFFBB8899))),
                   );
                 }
+
+                // Mark incoming unread messages as read
+                final hasUnread = docs.any((doc) {
+                  final d = doc.data() as Map<String, dynamic>;
+                  return d['from'] == widget.friendUid &&
+                      d['read'] == false;
+                });
+                if (hasUnread) {
+                  WidgetsBinding.instance.addPostFrameCallback(
+                      (_) => _markAsRead());
+                }
+
                 _scrollToBottom();
-                return ListView.builder(
+
+                // Build items with date separators
+                final List<Widget> items = [];
+                DateTime? lastDay;
+
+                for (final doc in docs) {
+                  final d = doc.data() as Map<String, dynamic>;
+                  final ts = d['createdAt'] as Timestamp?;
+                  final dt = ts?.toDate().toLocal();
+
+                  if (dt != null) {
+                    final day = DateTime(dt.year, dt.month, dt.day);
+                    if (lastDay == null || lastDay != day) {
+                      lastDay = day;
+                      items.add(_DateChip(date: day));
+                    }
+                  }
+
+                  items.add(_Bubble(
+                    text: d['text'] as String? ?? '',
+                    isMe: d['from'] == widget.myUid,
+                    createdAt: ts,
+                    read: d['read'] as bool? ?? true,
+                  ));
+                }
+
+                return ListView(
                   controller: _scrollCtrl,
                   padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                  itemCount: docs.length,
-                  itemBuilder: (ctx, i) {
-                    final d = docs[i].data() as Map<String, dynamic>;
-                    return _Bubble(
-                      text: d['text'] as String? ?? '',
-                      isMe: d['from'] == widget.myUid,
-                    );
-                  },
+                  children: items,
                 );
               },
             ),
@@ -279,23 +334,83 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
+// ─── Date Separator ───────────────────────────────────────────────────────────
+
+class _DateChip extends StatelessWidget {
+  final DateTime date;
+  const _DateChip({required this.date});
+
+  String _label() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final diff = today.difference(date).inDays;
+    if (diff == 0) return 'اليوم';
+    if (diff == 1) return 'أمس';
+    const months = [
+      'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+      'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'
+    ];
+    if (date.year == now.year) {
+      return '${date.day} ${months[date.month - 1]}';
+    }
+    return '${date.day}/${date.month}/${date.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFE0F2),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          _label(),
+          style: const TextStyle(color: Color(0xFFBB8899), fontSize: 12),
+        ),
+      ),
+    );
+  }
+}
+
 // ─── Message Bubble ───────────────────────────────────────────────────────────
 
 class _Bubble extends StatelessWidget {
   final String text;
   final bool isMe;
-  const _Bubble({required this.text, required this.isMe});
+  final Timestamp? createdAt;
+  final bool read;
+
+  const _Bubble({
+    required this.text,
+    required this.isMe,
+    this.createdAt,
+    this.read = true,
+  });
+
+  String _timeStr() {
+    if (createdAt == null) return '';
+    final dt = createdAt!.toDate().toLocal();
+    final h = dt.hour;
+    final m = dt.minute.toString().padLeft(2, '0');
+    final isPm = h >= 12;
+    final h12 = h % 12 == 0 ? 12 : h % 12;
+    return '$h12:$m ${isPm ? "م" : "ص"}';
+  }
 
   @override
   Widget build(BuildContext context) {
+    final timeStr = _timeStr();
+
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        margin: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.fromLTRB(12, 8, 10, 6),
         constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.72),
+            maxWidth: MediaQuery.of(context).size.width * 0.75),
         decoration: BoxDecoration(
           color: isMe ? const Color(0xFFE91E8C) : Colors.white,
           borderRadius: BorderRadius.only(
@@ -316,13 +431,48 @@ class _Bubble extends StatelessWidget {
             ),
           ],
         ),
-        child: Text(
-          text,
-          textDirection: TextDirection.rtl,
-          style: TextStyle(
-            color: isMe ? Colors.white : const Color(0xFF3D0030),
-            fontSize: 15,
-          ),
+        child: Column(
+          crossAxisAlignment:
+              isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              text,
+              textDirection: TextDirection.rtl,
+              style: TextStyle(
+                color: isMe ? Colors.white : const Color(0xFF3D0030),
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (timeStr.isNotEmpty)
+                  Text(
+                    timeStr,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: isMe
+                          ? Colors.white60
+                          : const Color(0xFFBB8899),
+                    ),
+                  ),
+                if (isMe) ...[
+                  const SizedBox(width: 3),
+                  Icon(
+                    read
+                        ? Icons.done_all_rounded
+                        : Icons.done_rounded,
+                    size: 14,
+                    color: read
+                        ? const Color(0xFF82CFFF)
+                        : Colors.white60,
+                  ),
+                ],
+              ],
+            ),
+          ],
         ),
       ),
     );

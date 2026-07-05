@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:video_player/video_player.dart';
+import '../utils/web_video.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -12,7 +14,7 @@ import '../models/user_model.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 import 'ad_screen.dart';
-import 'admin_screen.dart' show isAdminUser, initAdminState, AdminScreen, kAdminPin, grantPinAdmin;
+import 'admin_screen.dart' show isAdminUser, initAdminState, resetAdminState, AdminScreen;
 import 'auth_screen.dart';
 import 'friends_screen.dart';
 import 'post_detail_screen.dart';
@@ -166,17 +168,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _showAdminLogin() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const _HomePinDialog(),
-    );
-    if (ok == true && mounted) {
-      await _checkAndSetAdmin();
-    }
-  }
-
   Widget _buildNavBar(BuildContext _) {
     final isGuest =
         FirebaseAuth.instance.currentUser?.isAnonymous == true &&
@@ -188,6 +179,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Expanded(
             child: ElevatedButton.icon(
               onPressed: () async {
+                resetAdminState();
                 await FirebaseAuth.instance.signOut();
                 if (!mounted) return;
                 Navigator.pushReplacement(
@@ -572,34 +564,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-            // ── أيقونة الأدمن الخفية (أعلى اليسار) ─────────────────
-            SafeArea(
-              child: Align(
-                alignment: Alignment.topLeft,
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 10, top: 6),
-                  child: GestureDetector(
-                    onTap: _showAdminLogin,
-                    child: Opacity(
-                      opacity: 0.12,
-                      child: Container(
-                        width: 28,
-                        height: 28,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFE91E8C),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.shield_outlined,
-                          color: Colors.white,
-                          size: 14,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
           ], // Stack children
         ), // Stack
       ), // Scaffold
@@ -1312,8 +1276,8 @@ class _ActionBar extends StatelessWidget {
             children: [
               Expanded(
                 child: _ActionBtn(
-                  label: 'هداية',
-                  icon: Icons.card_giftcard_rounded,
+                  label: 'هدية',
+                  icon: Icons.redeem_rounded,
                   color: const Color(0xFFE91E8C),
                   onTap: () => _open(ctx, giftUrl),
                 ),
@@ -1531,13 +1495,15 @@ class _BannerAds extends StatefulWidget {
   State<_BannerAds> createState() => _BannerAdsState();
 }
 
+typedef _BannerItem = ({String url, int duration});
+
 class _BannerAdsState extends State<_BannerAds> {
   final PageController _ctrl = PageController();
   Timer? _timer;
   StreamSubscription<QuerySnapshot>? _sub;
 
   int _current = 0;
-  List<String> _urls = [];
+  List<_BannerItem> _items = [];
   bool _loading = true;
 
   static int _toInt(dynamic v) {
@@ -1546,11 +1512,18 @@ class _BannerAdsState extends State<_BannerAds> {
     return 0;
   }
 
+  static bool _isVideo(String url) {
+    final u = url.toLowerCase();
+    return u.contains('.mp4') ||
+        u.contains('.mov') ||
+        u.contains('.webm') ||
+        u.contains('video%20') ||
+        u.contains('%20video');
+  }
+
   @override
   void initState() {
     super.initState();
-
-    // اشتراك مستقل تماماً عن دورة build
     _sub = FirebaseFirestore.instance
         .collection('banner_ads')
         .where('active', isEqualTo: true)
@@ -1558,25 +1531,26 @@ class _BannerAdsState extends State<_BannerAds> {
         .listen(
           (snap) {
             if (!mounted) return;
-
             final docs = [...snap.docs]
-              ..sort(
-                (a, b) => _toInt(
-                  (a.data())['order'],
-                ).compareTo(_toInt((b.data())['order'])),
-              );
+              ..sort((a, b) => _toInt((a.data())['order'])
+                  .compareTo(_toInt((b.data())['order'])));
 
-            final urls = docs
-                .map((d) => (d.data()['imageUrl'] as String?) ?? '')
-                .where((u) => u.isNotEmpty)
+            final items = docs
+                .map((d) {
+                  final url = (d.data()['imageUrl'] as String?) ?? '';
+                  final dur = _toInt(d.data()['duration']) > 0
+                      ? _toInt(d.data()['duration'])
+                      : 5; // الافتراضي 5 ثواني
+                  return (url: url, duration: dur);
+                })
+                .where((item) => item.url.isNotEmpty)
                 .toList();
 
             setState(() {
-              _urls = urls;
+              _items = items;
               _loading = false;
             });
-
-            _restartTimer();
+            _scheduleNext();
           },
           onError: (_) {
             if (mounted) setState(() => _loading = false);
@@ -1584,21 +1558,20 @@ class _BannerAdsState extends State<_BannerAds> {
         );
   }
 
-  void _restartTimer() {
+  void _scheduleNext() {
     _timer?.cancel();
     _timer = null;
-    if (_urls.length <= 1) return;
-
-    _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+    if (_items.length <= 1) return;
+    final secs = _items.isNotEmpty ? _items[_current].duration : 5;
+    _timer = Timer(Duration(seconds: secs), () {
       if (!mounted) return;
-      final next = (_current + 1) % _urls.length;
+      final next = (_current + 1) % _items.length;
       if (_ctrl.hasClients) {
-        _ctrl.animateToPage(
-          next,
-          duration: const Duration(milliseconds: 500),
-          curve: Curves.easeInOut,
-        );
+        _ctrl.animateToPage(next,
+            duration: const Duration(milliseconds: 500),
+            curve: Curves.easeInOut);
       }
+      // سيُستدعى _scheduleNext تلقائياً عبر onPageChanged
     });
   }
 
@@ -1616,15 +1589,12 @@ class _BannerAdsState extends State<_BannerAds> {
       return const SizedBox(
         height: 180,
         child: Center(
-          child: CircularProgressIndicator(
-            color: Color(0xFFE91E8C),
-            strokeWidth: 2,
-          ),
+          child: CircularProgressIndicator(color: Color(0xFFE91E8C), strokeWidth: 2),
         ),
       );
     }
 
-    if (_urls.isEmpty) return const SizedBox.shrink();
+    if (_items.isEmpty) return const SizedBox.shrink();
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
@@ -1634,45 +1604,48 @@ class _BannerAdsState extends State<_BannerAds> {
           height: 180,
           child: Stack(
             children: [
-              // ── كل البنرات في PageView ──────────────────────────────
               PageView.builder(
                 controller: _ctrl,
-                itemCount: _urls.length,
-                onPageChanged: (i) => setState(() => _current = i),
-                itemBuilder: (ctx, i) => CachedNetworkImage(
-                  imageUrl: _urls[i],
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  height: 180,
-                  placeholder: (ctx, url) => Container(
-                    color: const Color(0xFF2D0022),
-                    child: const Center(
-                      child: CircularProgressIndicator(
-                        color: Color(0xFFE91E8C),
-                        strokeWidth: 2,
+                itemCount: _items.length,
+                onPageChanged: (i) {
+                  setState(() => _current = i);
+                  _scheduleNext(); // كل بنر يستخدم مدته الخاصة
+                },
+                itemBuilder: (ctx, i) {
+                  final url = _items[i].url;
+                  if (_isVideo(url)) {
+                    return _BannerVideoItem(url: url);
+                  }
+                  return CachedNetworkImage(
+                    imageUrl: url,
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    height: 180,
+                    placeholder: (ctx, url) => Container(
+                      color: const Color(0xFF2D0022),
+                      child: const Center(
+                        child: CircularProgressIndicator(
+                            color: Color(0xFFE91E8C), strokeWidth: 2),
                       ),
                     ),
-                  ),
-                  errorWidget: (ctx, url, e) => Container(
-                    color: const Color(0xFF2D0022),
-                    child: const Icon(
-                      Icons.broken_image,
-                      color: Colors.white24,
-                      size: 40,
+                    errorWidget: (ctx, url, e) => Container(
+                      color: const Color(0xFF2D0022),
+                      child: const Icon(Icons.broken_image,
+                          color: Colors.white24, size: 40),
                     ),
-                  ),
-                ),
+                  );
+                },
               ),
 
               // ── نقاط التنقل ──────────────────────────────────────────
-              if (_urls.length > 1)
+              if (_items.length > 1)
                 Positioned(
                   bottom: 8,
                   left: 0,
                   right: 0,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(_urls.length, (i) {
+                    children: List.generate(_items.length, (i) {
                       return AnimatedContainer(
                         duration: const Duration(milliseconds: 300),
                         margin: const EdgeInsets.symmetric(horizontal: 3),
@@ -1696,128 +1669,78 @@ class _BannerAdsState extends State<_BannerAds> {
   }
 }
 
-// ─── Admin PIN dialog ─────────────────────────────────────────────────────────
+// ─── Banner Video Item ────────────────────────────────────────────────────────
 
-class _HomePinDialog extends StatefulWidget {
-  const _HomePinDialog();
+class _BannerVideoItem extends StatefulWidget {
+  final String url;
+  const _BannerVideoItem({required this.url});
 
   @override
-  State<_HomePinDialog> createState() => _HomePinDialogState();
+  State<_BannerVideoItem> createState() => _BannerVideoItemState();
 }
 
-class _HomePinDialogState extends State<_HomePinDialog> {
-  final _pinCtrl = TextEditingController();
-  bool _loading = false;
-  String? _error;
+class _BannerVideoItemState extends State<_BannerVideoItem>
+    with AutomaticKeepAliveClientMixin {
+  VideoPlayerController? _ctrl;
+  bool _ready = false;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    try {
+      final ctrl = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+      _ctrl = ctrl;
+      await ctrl.initialize();
+      ctrl.setLooping(true);
+      ctrl.setVolume(0); // مكتوم دائماً في البنر
+      await ctrl.play();
+      if (mounted) setState(() => _ready = true);
+    } catch (_) {
+      // إذا فشل التحميل يظهر placeholder
+    }
+  }
 
   @override
   void dispose() {
-    _pinCtrl.dispose();
+    _ctrl?.dispose();
     super.dispose();
-  }
-
-  Future<void> _submit() async {
-    final pin = _pinCtrl.text.trim();
-    if (pin.isEmpty) {
-      setState(() => _error = 'أدخل الرقم السري');
-      return;
-    }
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    await Future.delayed(const Duration(milliseconds: 300));
-    if (!mounted) return;
-    if (pin == kAdminPin) {
-      if (FirebaseAuth.instance.currentUser == null) {
-        await FirebaseAuth.instance.signInAnonymously();
-      }
-      await grantPinAdmin();
-      if (mounted) Navigator.pop(context, true);
-    } else {
-      setState(() {
-        _loading = false;
-        _error = 'الرقم السري غير صحيح';
-      });
-    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: const Row(
-        children: [
-          Icon(Icons.admin_panel_settings_rounded, color: Color(0xFFE91E8C)),
-          SizedBox(width: 8),
-          Text(
-            'دخول الأدمن',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _pinCtrl,
-            obscureText: true,
-            textDirection: TextDirection.ltr,
-            autofocus: true,
-            onSubmitted: (_) => _submit(),
-            decoration: InputDecoration(
-              labelText: 'الرقم السري',
-              prefixIcon: const Icon(
-                Icons.lock_outline,
-                color: Color(0xFFE91E8C),
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(
-                  color: Color(0xFFE91E8C),
-                  width: 2,
-                ),
-              ),
-            ),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              _error!,
-              style: const TextStyle(color: Colors.red, fontSize: 12),
-            ),
-          ],
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: _loading ? null : () => Navigator.pop(context, false),
-          child: const Text('إلغاء'),
+    super.build(context);
+
+    // على الويب: استخدم <video> native مباشرة (يتجاوز قيود CORS في video_player)
+    if (kIsWeb) {
+      return buildNativeWebVideo(widget.url);
+    }
+
+    if (!_ready || _ctrl == null) {
+      return Container(
+        color: const Color(0xFF2D0022),
+        child: const Center(
+          child: CircularProgressIndicator(
+              color: Color(0xFFE91E8C), strokeWidth: 2),
         ),
-        ElevatedButton(
-          onPressed: _loading ? null : _submit,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFE91E8C),
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-          child: _loading
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    color: Colors.white,
-                    strokeWidth: 2,
-                  ),
-                )
-              : const Text('دخول'),
+      );
+    }
+    return SizedBox.expand(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        child: SizedBox(
+          width: _ctrl!.value.size.width,
+          height: _ctrl!.value.size.height,
+          child: VideoPlayer(_ctrl!),
         ),
-      ],
+      ),
     );
   }
 }
+

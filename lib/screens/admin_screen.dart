@@ -22,6 +22,10 @@ const String _kAdminSessionSecret = 'om_admin_session_v1_granted';
 
 bool _pinAdminGranted = false;
 
+void resetAdminState() {
+  _pinAdminGranted = false;
+}
+
 Future<void> grantPinAdmin() async {
   _pinAdminGranted = true;
   try {
@@ -228,13 +232,13 @@ class _SocialLinksTabState extends State<_SocialLinksTab> {
             icon: Icons.touch_app_rounded,
             color: Color(0xFF7C3AED),
             title: 'أزرار الإجراءات',
-            subtitle: 'روابط أزرار الهداية والاشتراك في الصفحة الرئيسية',
+            subtitle: 'روابط أزرار الهدية والاشتراك في الصفحة الرئيسية',
           ),
           const SizedBox(height: 16),
           _SocialField(ctrl: _snapchat, label: 'رابط مجموعة واتساب',
               hint: 'مثال: https://chat.whatsapp.com/...',
               icon: Icons.group_rounded, color: const Color(0xFF25D366)),
-          _SocialField(ctrl: _gift, label: 'رابط الهداية',
+          _SocialField(ctrl: _gift, label: 'رابط الهدية',
               hint: 'مثال: https://...',
               icon: Icons.card_giftcard_rounded,
               color: const Color(0xFFE91E8C)),
@@ -554,7 +558,7 @@ class _PostTile extends StatelessWidget {
       context: ctx,
       builder: (d) => AlertDialog(
         title: const Text('رفض الطلب'),
-        content: Text('رفض طلب نشر "${entry.name}"؟'),
+        content: Text('رفض طلب نشر "${entry.username.isNotEmpty ? entry.username : entry.name}"؟'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(d, false),
               child: const Text('إلغاء')),
@@ -593,7 +597,7 @@ class _PostTile extends StatelessWidget {
       chatId: chatId,
       myUid: myUid,
       friendUid: entry.uid,
-      friendName: entry.name.isEmpty ? 'مستخدم' : entry.name,
+      friendName: entry.username.isNotEmpty ? entry.username : (entry.name.isNotEmpty ? entry.name : 'مستخدم'),
       friendPhoto: entry.photo,
     )));
   }
@@ -627,7 +631,7 @@ class _PostTile extends StatelessWidget {
       context: ctx,
       builder: (d) => AlertDialog(
         title: const Text('تأكيد الحذف'),
-        content: Text('حذف "${entry.name}"؟ لا يمكن التراجع.'),
+        content: Text('حذف "${entry.username.isNotEmpty ? entry.username : entry.name}"؟ لا يمكن التراجع.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(d, false),
@@ -757,7 +761,7 @@ class _PostTile extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                entry.name.isEmpty ? '(بدون اسم)' : entry.name,
+                entry.username.isNotEmpty ? entry.username : (entry.name.isNotEmpty ? entry.name : '(بدون اسم)'),
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: 13,

@@ -484,8 +484,9 @@ class _MessagesTabState extends State<_MessagesTab> {
                       d['names'] as Map<String, dynamic>? ?? {};
                   final photos =
                       d['photos'] as Map<String, dynamic>? ?? {};
+                  final _rawName = (names[otherUid] as String?) ?? '';
                   final otherName =
-                      (names[otherUid] as String?) ?? 'مستخدم';
+                      _rawName.isNotEmpty ? _rawName : 'مستخدم';
                   final otherPhoto =
                       (photos[otherUid] as String?) ?? '';
                   final lastMsg =
@@ -610,24 +611,48 @@ class _RequestTileState extends State<_RequestTile> {
         },
       );
 
+      const greetText = 'أصبحنا أصدقاء! 👋';
+
       batch.set(
         db.collection('chats').doc(chatId),
         {
           'participants': [widget.myUid, fromUid],
-          'lastMessage': '',
+          'lastMessage': greetText,
+          'lastFrom': widget.myUid,
           'lastAt': FieldValue.serverTimestamp(),
+          'names': {
+            widget.myUid: myUsername,
+            fromUid: fromUsername,
+          },
+          'photos': {
+            widget.myUid: myPhoto,
+            fromUid: fromPhoto,
+          },
         },
         SetOptions(merge: true),
       );
 
+      // رسالة حقيقية تظهر في المحادثة
+      batch.set(
+        db.collection('chats').doc(chatId).collection('messages').doc(),
+        {
+          'from': widget.myUid,
+          'text': greetText,
+          'createdAt': FieldValue.serverTimestamp(),
+          'read': false,
+        },
+      );
+
+      // إشعار للصديق في الصندوق
       batch.set(
         db.collection('inbox').doc(fromUid).collection('messages').doc(),
         {
-          'type': 'friend_accepted',
+          'type': 'message',
           'from': widget.myUid,
           'fromName': myUsername,
           'fromPhoto': myPhoto,
-          'text': '$myUsername قبل طلب صداقتك',
+          'text': greetText,
+          'chatId': chatId,
           'read': false,
           'createdAt': FieldValue.serverTimestamp(),
         },

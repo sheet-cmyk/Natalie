@@ -22,6 +22,7 @@ dependencies:
   google_fonts: ^6.2.1
   video_player: ^2.9.3
   flutter_local_notifications: ^18.0.1
+  web: any
 
 dev_dependencies:
   flutter_test:
