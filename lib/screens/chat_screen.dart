@@ -256,9 +256,11 @@ class _ChatScreenState extends State<ChatScreen> {
                     }
                   }
 
+                  final isMe = d['from'] == widget.myUid;
                   items.add(_Bubble(
                     text: d['text'] as String? ?? '',
-                    isMe: d['from'] == widget.myUid,
+                    isMe: isMe,
+                    senderLabel: isMe ? null : widget.friendName,
                     createdAt: ts,
                     read: d['read'] as bool? ?? true,
                   ));
@@ -380,12 +382,14 @@ class _DateChip extends StatelessWidget {
 class _Bubble extends StatelessWidget {
   final String text;
   final bool isMe;
+  final String? senderLabel;
   final Timestamp? createdAt;
   final bool read;
 
   const _Bubble({
     required this.text,
     required this.isMe,
+    this.senderLabel,
     this.createdAt,
     this.read = true,
   });
@@ -406,7 +410,24 @@ class _Bubble extends StatelessWidget {
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
+      child: Column(
+        crossAxisAlignment:
+            isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!isMe && senderLabel != null && senderLabel!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(right: 4, left: 4, bottom: 2),
+              child: Text(
+                senderLabel!,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFFE91E8C),
+                ),
+              ),
+            ),
+          Container(
         margin: const EdgeInsets.symmetric(vertical: 3),
         padding: const EdgeInsets.fromLTRB(12, 8, 10, 6),
         constraints: BoxConstraints(
@@ -474,6 +495,8 @@ class _Bubble extends StatelessWidget {
             ),
           ],
         ),
+      ),
+        ],
       ),
     );
   }

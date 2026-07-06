@@ -12,6 +12,7 @@ import 'chat_screen.dart';
 class PostDetailScreen extends StatefulWidget {
   final List<String> photos;
   final String name;
+  final String username; // الـ ID الفريد للمستخدم
   final int age;
   final String bio;
   final String whatsapp;
@@ -25,6 +26,7 @@ class PostDetailScreen extends StatefulWidget {
     super.key,
     required this.photos,
     required this.name,
+    this.username = '',
     required this.age,
     required this.bio,
     required this.whatsapp,
@@ -35,9 +37,14 @@ class PostDetailScreen extends StatefulWidget {
     required this.ownerUid,
   });
 
+  // اسم العرض: ID للمستخدمين، name للإعلانات
+  String get displayName =>
+      username.isNotEmpty ? username : (name.isNotEmpty ? name : '—');
+
   factory PostDetailScreen.fromAd(AdModel ad) => PostDetailScreen(
         photos: ad.photoUrls,
         name: ad.name,
+        username: '',
         age: ad.age,
         bio: ad.bio,
         whatsapp: ad.whatsapp,
@@ -51,6 +58,7 @@ class PostDetailScreen extends StatefulWidget {
   factory PostDetailScreen.fromProfile(UserModel user) => PostDetailScreen(
         photos: user.photoUrls,
         name: user.name,
+        username: user.username,
         age: user.age,
         bio: user.bio,
         whatsapp: user.whatsapp,
@@ -353,16 +361,33 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Expanded(
-                        child: Text(
-                          widget.name,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
-                            shadows: [
-                              Shadow(color: Colors.black87, blurRadius: 12)
-                            ],
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              widget.displayName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 26,
+                                fontWeight: FontWeight.bold,
+                                shadows: [
+                                  Shadow(color: Colors.black87, blurRadius: 12)
+                                ],
+                              ),
+                            ),
+                            if (widget.username.isNotEmpty && widget.name.isNotEmpty)
+                              Text(
+                                widget.name,
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 14,
+                                  shadows: [
+                                    Shadow(color: Colors.black87, blurRadius: 8)
+                                  ],
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                       Container(
@@ -422,7 +447,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   // ── زر الصداقة / المراسلة ─────────────────────────
                   _FriendStatusButton(
                     ownerUid: widget.ownerUid,
-                    ownerName: widget.name,
+                    ownerName: widget.displayName,
                     ownerPhoto: widget.photos.firstOrNull ?? '',
                   ),
                   const SizedBox(height: 8),
