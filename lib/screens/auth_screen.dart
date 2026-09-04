@@ -1,4 +1,4 @@
-import 'dart:math';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -166,7 +166,7 @@ class _AuthScreenState extends State<AuthScreen> {
       final base =
           displayName.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '').toLowerCase();
       id = base.length >= 4
-          ? base.substring(0, min(10, base.length))
+          ? base.substring(0, math.min(10, base.length))
           : user.uid.substring(0, 8);
     } else {
       id = 'user${user.uid.substring(0, 8)}';
@@ -214,6 +214,9 @@ class _AuthScreenState extends State<AuthScreen> {
         children: [
           // ── Background image ───────────────────────────────────────────
           Image.asset('assets/Image/MSA1.png', fit: BoxFit.cover),
+
+          // ── Butterfly animation ────────────────────────────────────────
+          const Positioned.fill(child: _ButterflyAnimation()),
 
           // ── Bottom buttons ─────────────────────────────────────────────
           if (!_alreadyLoggedIn)
@@ -627,4 +630,243 @@ class _AuthAdminPinDialogState extends State<_AuthAdminPinDialog> {
       ],
     );
   }
+}
+
+// ─── Butterfly Animation ──────────────────────────────────────────────────────
+
+class _ButterflyAnimation extends StatefulWidget {
+  const _ButterflyAnimation();
+
+  @override
+  State<_ButterflyAnimation> createState() => _ButterflyAnimationState();
+}
+
+class _ButterflyAnimationState extends State<_ButterflyAnimation>
+    with TickerProviderStateMixin {
+  late final AnimationController _pathCtrl;
+  late final AnimationController _wingCtrl;
+  late final AnimationController _tickCtrl;
+
+  final List<_Sparkle> _sparkles = [];
+  final math.Random _rng = math.Random();
+  int _frame = 0;
+
+  // Previous position — used to compute heading angle
+  Offset _prevPos = Offset.zero;
+  double _heading = 0;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // One full loop of the flight path: 28 seconds (very slow)
+    _pathCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 28),
+    )..repeat();
+
+    // Wing flap: one stroke every ~220 ms
+    _wingCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    )..repeat(reverse: true);
+
+    // 60 fps tick for particles
+    _tickCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 16),
+    )..repeat();
+
+    _tickCtrl.addListener(_onTick);
+  }
+
+  @override
+  void dispose() {
+    _pathCtrl.dispose();
+    _wingCtrl.dispose();
+    _tickCtrl.dispose();
+    super.dispose();
+  }
+
+  // ── Flight path (Lissajous-inspired) ─────────────────────────────────────
+  Offset _position(Size sz) {
+    final t = _pathCtrl.value * 2 * math.pi;
+    // Two independent sine frequencies → natural wandering figure-eight
+    final x = sz.width  * 0.50 + sz.width  * 0.38 * math.sin(t * 0.83 + 0.9);
+    final y = sz.height * 0.38 + sz.height * 0.28 * math.sin(t * 0.57);
+    return Offset(x, y);
+  }
+
+  void _onTick() {
+    _frame++;
+    final sz = _getSize();
+    if (sz == Size.zero) return;
+
+    final pos = _position(sz);
+
+    // Heading from prev → current position
+    final delta = pos - _prevPos;
+    if (delta.distance > 0.1) {
+      _heading = math.atan2(delta.dy, delta.dx);
+    }
+    _prevPos = pos;
+
+    // Spawn a sparkle every 3 frames
+    if (_frame % 3 == 0 && _sparkles.length < 40) {
+      _sparkles.add(_Sparkle(
+        x: pos.dx + (_rng.nextDouble() - 0.5) * 30,
+        y: pos.dy + (_rng.nextDouble() - 0.5) * 30,
+        vx: (_rng.nextDouble() - 0.5) * 0.7,
+        vy: -(_rng.nextDouble() * 0.9 + 0.3),
+        size: _rng.nextDouble() * 5 + 3,
+        rot: _rng.nextDouble() * math.pi,
+        life: 0,
+        maxLife: 55 + _rng.nextInt(35),
+        // alternate gold and white sparkles
+        gold: _rng.nextBool(),
+      ));
+    }
+
+    // Age and remove dead sparkles
+    for (final s in _sparkles) {
+      s.x  += s.vx;
+      s.y  += s.vy;
+      s.rot += 0.04;
+      s.life++;
+    }
+    _sparkles.removeWhere((s) => s.life >= s.maxLife);
+
+    setState(() {});
+  }
+
+  Size _getSize() {
+    final ctx = context;
+    if (!ctx.mounted) return Size.zero;
+    final rb = ctx.findRenderObject();
+    if (rb is RenderBox && rb.hasSize) return rb.size;
+    return Size.zero;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final sz = Size(constraints.maxWidth, constraints.maxHeight);
+        final pos = _position(sz);
+
+        // Wing flap: scaleX oscillates 0.18 → 1.0 → 0.18
+        final flapT = _wingCtrl.value;
+        // ease in-out gives the "snap" of real wings
+        final scaleX = 0.18 + 0.82 * math.pow(math.sin(flapT * math.pi), 0.6);
+
+        return Stack(
+          children: [
+            // ── Sparkles / stars ──────────────────────────────────────
+            CustomPaint(
+              size: sz,
+              painter: _SparklePainter(_sparkles),
+            ),
+
+            // ── Butterfly ─────────────────────────────────────────────
+            Positioned(
+              left: pos.dx - 45,
+              top:  pos.dy - 45,
+              child: Transform.rotate(
+                angle: _heading + math.pi / 2,
+                child: Transform.scale(
+                  scaleX: scaleX.toDouble(),
+                  child: Image.asset(
+                    'assets/Image/4.png',
+                    width: 90,
+                    height: 90,
+                    filterQuality: FilterQuality.high,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// ─── Sparkle data ─────────────────────────────────────────────────────────────
+
+class _Sparkle {
+  double x, y, vx, vy, size, rot;
+  int life, maxLife;
+  bool gold;
+
+  _Sparkle({
+    required this.x, required this.y,
+    required this.vx, required this.vy,
+    required this.size, required this.rot,
+    required this.life, required this.maxLife,
+    required this.gold,
+  });
+
+  double get opacity {
+    final ratio = life / maxLife;
+    // fade in quickly, fade out slowly
+    if (ratio < 0.15) return ratio / 0.15;
+    return 1.0 - ((ratio - 0.15) / 0.85);
+  }
+}
+
+// ─── Sparkle painter ─────────────────────────────────────────────────────────
+
+class _SparklePainter extends CustomPainter {
+  final List<_Sparkle> sparkles;
+  _SparklePainter(this.sparkles);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final s in sparkles) {
+      final op = s.opacity.clamp(0.0, 1.0);
+      if (op <= 0) continue;
+
+      canvas.save();
+      canvas.translate(s.x, s.y);
+      canvas.rotate(s.rot);
+
+      // Outer glow
+      final glowPaint = Paint()
+        ..color = (s.gold ? const Color(0xFFFFD770) : Colors.white)
+            .withValues(alpha: op * 0.30)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+      canvas.drawCircle(Offset.zero, s.size * 1.6, glowPaint);
+
+      // 4-pointed star
+      final starPaint = Paint()
+        ..color = (s.gold ? const Color(0xFFFFCC44) : Colors.white)
+            .withValues(alpha: op)
+        ..style = PaintingStyle.fill;
+      canvas.drawPath(_star4(s.size), starPaint);
+
+      // Tiny bright center
+      final centerPaint = Paint()
+        ..color = Colors.white.withValues(alpha: op * 0.95);
+      canvas.drawCircle(Offset.zero, s.size * 0.25, centerPaint);
+
+      canvas.restore();
+    }
+  }
+
+  // 4-pointed diamond star
+  Path _star4(double r) {
+    const inner = 0.28;
+    final path = Path();
+    for (int i = 0; i < 8; i++) {
+      final angle = i * math.pi / 4 - math.pi / 2;
+      final rad   = i.isEven ? r : r * inner;
+      final pt    = Offset(math.cos(angle) * rad, math.sin(angle) * rad);
+      i == 0 ? path.moveTo(pt.dx, pt.dy) : path.lineTo(pt.dx, pt.dy);
+    }
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldRepaint(covariant _SparklePainter old) => true;
 }
