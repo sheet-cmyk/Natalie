@@ -636,158 +636,119 @@ class _AuthAdminPinDialogState extends State<_AuthAdminPinDialog> {
 
 class _ButterflyAnimation extends StatefulWidget {
   const _ButterflyAnimation();
-
   @override
   State<_ButterflyAnimation> createState() => _ButterflyAnimationState();
 }
 
 class _ButterflyAnimationState extends State<_ButterflyAnimation>
-    with TickerProviderStateMixin {
-  late final AnimationController _pathCtrl;
-  late final AnimationController _wingCtrl;
-  late final AnimationController _tickCtrl;
+    with SingleTickerProviderStateMixin {
+  // One controller drives everything: path + flap + particles
+  late final AnimationController _ctrl;
 
   final List<_Sparkle> _sparkles = [];
   final math.Random _rng = math.Random();
   int _frame = 0;
-
-  // Previous position — used to compute heading angle
   Offset _prevPos = Offset.zero;
   double _heading = 0;
+  Size _sz = Size.zero;
 
   @override
   void initState() {
     super.initState();
-
-    // One full loop of the flight path: 28 seconds (very slow)
-    _pathCtrl = AnimationController(
+    _ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 28),
+      duration: const Duration(seconds: 150),
     )..repeat();
 
-    // Wing flap: one stroke every ~220 ms
-    _wingCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 220),
-    )..repeat(reverse: true);
-
-    // 60 fps tick for particles
-    _tickCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 16),
-    )..repeat();
-
-    _tickCtrl.addListener(_onTick);
+    // Particle + heading update fires before AnimatedBuilder rebuild
+    _ctrl.addListener(_tick);
   }
 
   @override
   void dispose() {
-    _pathCtrl.dispose();
-    _wingCtrl.dispose();
-    _tickCtrl.dispose();
+    _ctrl.removeListener(_tick);
+    _ctrl.dispose();
     super.dispose();
   }
 
-  // ── Flight path (Lissajous-inspired) ─────────────────────────────────────
-  Offset _position(Size sz) {
-    final t = _pathCtrl.value * 2 * math.pi;
-    // Two independent sine frequencies → natural wandering figure-eight
-    final x = sz.width  * 0.50 + sz.width  * 0.38 * math.sin(t * 0.83 + 0.9);
-    final y = sz.height * 0.38 + sz.height * 0.28 * math.sin(t * 0.57);
-    return Offset(x, y);
+  // ── Flight path ────────────────────────────────────────────────────────────
+  Offset _pos(Size sz) {
+    final t = _ctrl.value * 2 * math.pi;
+    return Offset(
+      sz.width  * 0.50 + sz.width  * 0.38 * math.sin(t * 0.83 + 0.9),
+      sz.height * 0.38 + sz.height * 0.28 * math.sin(t * 0.57),
+    );
   }
 
-  void _onTick() {
+  void _tick() {
+    if (_sz == Size.zero) return;
     _frame++;
-    final sz = _getSize();
-    if (sz == Size.zero) return;
 
-    final pos = _position(sz);
-
-    // Heading from prev → current position
+    final pos = _pos(_sz);
     final delta = pos - _prevPos;
-    if (delta.distance > 0.1) {
-      _heading = math.atan2(delta.dy, delta.dx);
-    }
+    if (delta.distance > 0.15) _heading = math.atan2(delta.dy, delta.dx);
     _prevPos = pos;
 
-    // Spawn a sparkle every 3 frames
-    if (_frame % 3 == 0 && _sparkles.length < 40) {
+    if (_frame % 3 == 0 && _sparkles.length < 45) {
       _sparkles.add(_Sparkle(
-        x: pos.dx + (_rng.nextDouble() - 0.5) * 30,
-        y: pos.dy + (_rng.nextDouble() - 0.5) * 30,
-        vx: (_rng.nextDouble() - 0.5) * 0.7,
-        vy: -(_rng.nextDouble() * 0.9 + 0.3),
-        size: _rng.nextDouble() * 5 + 3,
+        x: pos.dx + (_rng.nextDouble() - 0.5) * 28,
+        y: pos.dy + (_rng.nextDouble() - 0.5) * 28,
+        vx: (_rng.nextDouble() - 0.5) * 0.65,
+        vy: -(_rng.nextDouble() * 0.85 + 0.25),
+        size: _rng.nextDouble() * 5.5 + 2.5,
         rot: _rng.nextDouble() * math.pi,
         life: 0,
-        maxLife: 55 + _rng.nextInt(35),
-        // alternate gold and white sparkles
+        maxLife: 50 + _rng.nextInt(40),
         gold: _rng.nextBool(),
       ));
     }
 
-    // Age and remove dead sparkles
     for (final s in _sparkles) {
-      s.x  += s.vx;
-      s.y  += s.vy;
-      s.rot += 0.04;
-      s.life++;
+      s.x += s.vx; s.y += s.vy; s.rot += 0.04; s.life++;
     }
     _sparkles.removeWhere((s) => s.life >= s.maxLife);
-
-    setState(() {});
-  }
-
-  Size _getSize() {
-    final ctx = context;
-    if (!ctx.mounted) return Size.zero;
-    final rb = ctx.findRenderObject();
-    if (rb is RenderBox && rb.hasSize) return rb.size;
-    return Size.zero;
   }
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (ctx, constraints) {
-        final sz = Size(constraints.maxWidth, constraints.maxHeight);
-        final pos = _position(sz);
+    return LayoutBuilder(builder: (_, cst) {
+      _sz = Size(cst.maxWidth, cst.maxHeight);
+      return AnimatedBuilder(
+        animation: _ctrl,
+        builder: (context2, child2) {
+          if (_sz == Size.zero) return const SizedBox.expand();
+          final pos = _pos(_sz);
 
-        // Wing flap: scaleX oscillates 0.18 → 1.0 → 0.18
-        final flapT = _wingCtrl.value;
-        // ease in-out gives the "snap" of real wings
-        final scaleX = 0.18 + 0.82 * math.pow(math.sin(flapT * math.pi), 0.6);
+          // Wing flap: 5 flaps/second derived from main controller
+          final flapAngle = _ctrl.value * 150 * 1.1 * 2 * math.pi;
+          final scaleX = 0.18 + 0.82 * math.sin(flapAngle).abs();
 
-        return Stack(
-          children: [
-            // ── Sparkles / stars ──────────────────────────────────────
+          return Stack(children: [
+            // ── Sparkles ───────────────────────────────────────────
             CustomPaint(
-              size: sz,
-              painter: _SparklePainter(_sparkles),
+              size: _sz,
+              painter: _SparklePainter(List<_Sparkle>.from(_sparkles)),
             ),
-
-            // ── Butterfly ─────────────────────────────────────────────
+            // ── Butterfly ──────────────────────────────────────────
             Positioned(
               left: pos.dx - 45,
               top:  pos.dy - 45,
               child: Transform.rotate(
                 angle: _heading + math.pi / 2,
                 child: Transform.scale(
-                  scaleX: scaleX.toDouble(),
+                  scaleX: scaleX,
                   child: Image.asset(
                     'assets/Image/4.png',
-                    width: 90,
-                    height: 90,
+                    width: 90, height: 90,
                     filterQuality: FilterQuality.high,
                   ),
                 ),
               ),
             ),
-          ],
-        );
-      },
-    );
+          ]);
+        },
+      );
+    });
   }
 }
 
