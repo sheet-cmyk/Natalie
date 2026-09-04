@@ -39,14 +39,18 @@ class _AuthScreenState extends State<AuthScreen> {
 
   // ── Google ────────────────────────────────────────────────────────────────
   Future<void> _signInWithGoogle() async {
-    setState(() {
-      _loading = true;
-      _generalError = null;
-    });
+    setState(() { _loading = true; _generalError = null; });
     try {
       UserCredential cred;
       if (kIsWeb) {
-        cred = await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
+        final provider = GoogleAuthProvider()
+          ..addScope('email')
+          ..addScope('profile')
+          ..setCustomParameters({
+            'client_id': '1016050589765-jppc1bkb5o9qsq94mgj1q38455agh73p.apps.googleusercontent.com',
+            'prompt': 'select_account',
+          });
+        cred = await FirebaseAuth.instance.signInWithPopup(provider);
       } else {
         final googleUser = await GoogleSignIn().signIn();
         if (googleUser == null) {
@@ -61,27 +65,26 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
         );
       }
-      await _ensureUserRecord(
-        cred.user!,
-        displayName: cred.user!.displayName ?? '',
-      );
+      await _ensureUserRecord(cred.user!, displayName: cred.user!.displayName ?? '');
       if (mounted) _goto();
-    } catch (e) {
+    } on FirebaseAuthException catch (e) {
       if (mounted) {
         setState(() {
           _loading = false;
-          _generalError = 'فشل تسجيل الدخول بـ Google';
+          _generalError = e.code == 'popup-closed-by-user'
+              ? 'أُغلق النافذة قبل إتمام تسجيل الدخول'
+              : e.code == 'popup-blocked'
+                  ? 'المتصفح حجب النافذة المنبثقة — أذن بها وأعد المحاولة'
+                  : 'فشل تسجيل الدخول بـ Google (${e.code})';
         });
       }
+    } catch (e) {
+      if (mounted) setState(() { _loading = false; _generalError = 'فشل تسجيل الدخول بـ Google'; });
     }
   }
 
   // ── Phone ─────────────────────────────────────────────────────────────────
   void _signInWithPhone() {
-    if (kIsWeb) {
-      setState(() => _generalError = 'تسجيل الدخول برقم الهاتف متاح على التطبيق فقط');
-      return;
-    }
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const PhoneAuthScreen()),

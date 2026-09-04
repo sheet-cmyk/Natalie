@@ -40,11 +40,9 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
     }
     setState(() { _loading = true; _error = null; });
 
-    // في وضع التطوير: تجاوز التحقق التلقائي (يسمح باستخدام أرقام الاختبار)
+    // في وضع التطوير: تجاوز التحقق التلقائي على كل المنصات
     if (kDebugMode) {
-      await FirebaseAuth.instance.setSettings(
-        appVerificationDisabledForTesting: true,
-      );
+      await FirebaseAuth.instance.setSettings(appVerificationDisabledForTesting: true);
     }
 
     await FirebaseAuth.instance.verifyPhoneNumber(
