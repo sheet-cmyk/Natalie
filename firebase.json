@@ -1,8 +1,10 @@
 {
   "hosting": {
+    "target": "natalie-zain",
     "public": "build/web",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
+      { "source": "/child-safety", "destination": "/child-safety.html" },
       { "source": "**", "destination": "/index.html" }
     ],
     "headers": [

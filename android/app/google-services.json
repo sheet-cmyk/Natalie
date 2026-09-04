@@ -7,17 +7,17 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1016050589765:android:377d7871bbfe58fd04432c",
+        "mobilesdk_app_id": "1:1016050589765:android:8bea08c8466a257b04432c",
         "android_client_info": {
-          "package_name": "com.example.om_natalie"
+          "package_name": "com.hussein.liqaa"
         }
       },
       "oauth_client": [
         {
-          "client_id": "1016050589765-g42e47ep4kacbgfadel7s2rd2v9h6rfp.apps.googleusercontent.com",
+          "client_id": "1016050589765-i3lsijne700lv98dudbpsol6a2pdm6nc.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "com.example.om_natalie",
+            "package_name": "com.hussein.liqaa",
             "certificate_hash": "3656c73926a3307d0248894046ea6002f13f7704"
           }
         },

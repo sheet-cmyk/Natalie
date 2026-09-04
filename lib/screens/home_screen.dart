@@ -1277,7 +1277,7 @@ class _ActionBar extends StatelessWidget {
               Expanded(
                 child: _ActionBtn(
                   label: 'هدية',
-                  icon: Icons.redeem_rounded,
+                  icon: Icons.volunteer_activism_rounded,
                   color: const Color(0xFFE91E8C),
                   onTap: () => _open(ctx, giftUrl),
                 ),

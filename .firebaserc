@@ -1,5 +1,12 @@
 {
   "projects": {
     "default": "om-natalie"
+  },
+  "targets": {
+    "om-natalie": {
+      "hosting": {
+        "natalie-zain": ["natalie-zain"]
+      }
+    }
   }
 }

@@ -1,4 +1,4 @@
-package com.example.om_natalie
+package com.hussein.liqaa
 
 import io.flutter.embedding.android.FlutterActivity
 
