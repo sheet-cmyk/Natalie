@@ -6,6 +6,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/ad_model.dart';
 import '../services/firebase_service.dart';
+import '../services/subscription_service.dart';
+import 'subscription_screen.dart';
 
 class AdScreen extends StatefulWidget {
   const AdScreen({super.key});
@@ -192,6 +194,25 @@ class _AdScreenState extends State<AdScreen> {
       ));
       return;
     }
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.isAnonymous) {
+      if (mounted) {
+        await Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const SubscriptionScreen()));
+      }
+      return;
+    }
+
+    final active = await SubscriptionService.instance.hasActiveSubscription(user.uid);
+    if (!mounted) return;
+
+    if (!active) {
+      await Navigator.push(context,
+          MaterialPageRoute(builder: (_) => const SubscriptionScreen()));
+      return;
+    }
+
     // احفظ أولاً ثم اطلب
     await _save();
     if (!mounted) return;

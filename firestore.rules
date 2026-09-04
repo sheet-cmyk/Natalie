@@ -16,10 +16,24 @@ service cloud.firestore {
       );
     }
 
+    function hasActiveSubscription(uid) {
+      let sub = get(/databases/$(database)/documents/users/$(uid)).data.get('subscription', null);
+      return sub != null &&
+             sub.get('status', 'inactive') == 'active' &&
+             (
+               !sub.keys().hasAny(['expiresAt']) ||
+               sub.expiresAt > request.time
+             );
+    }
+
     match /users/{userId} {
       allow read: if request.auth != null;
-      allow write: if (request.auth != null && request.auth.uid == userId)
-                   || isAdmin();
+      // User can update their own doc, but NOT the subscription field
+      allow write: if isAdmin();
+      allow update: if request.auth != null && request.auth.uid == userId
+                    && !request.resource.data.keys().hasAny(['subscription'])
+                    && !(request.resource.data.diff(resource.data).affectedKeys().hasAny(['subscription']));
+      allow create: if request.auth != null && request.auth.uid == userId;
     }
 
     match /devices/{deviceId} {
@@ -31,8 +45,13 @@ service cloud.firestore {
 
     match /ads/{userId} {
       allow read: if request.auth != null;
-      allow write: if (request.auth != null && request.auth.uid == userId)
-                   || isAdmin();
+      allow create: if request.auth != null && request.auth.uid == userId;
+      // User can edit their ad and request publishing (pendingPublish) but cannot set published=true
+      allow update: if isAdmin() ||
+                    (request.auth != null && request.auth.uid == userId &&
+                     !(request.resource.data.diff(resource.data).affectedKeys().hasAny(['published'])));
+      allow delete: if isAdmin() ||
+                    (request.auth != null && request.auth.uid == userId);
     }
 
     match /banner_ads/{docId} {

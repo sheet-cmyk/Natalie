@@ -18,6 +18,7 @@ import 'admin_screen.dart' show isAdminUser, initAdminState, resetAdminState, Ad
 import 'auth_screen.dart';
 import 'friends_screen.dart';
 import 'post_detail_screen.dart';
+import '../services/subscription_service.dart';
 import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -40,6 +41,34 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _listenInbox();
     _restoreAdminState();
+    _checkStripeReturn();
+  }
+
+  void _checkStripeReturn() {
+    if (!kIsWeb) return;
+    final params = Uri.base.queryParameters;
+    final result = params['subscription'];
+    if (result == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (result == 'success') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ تم الاشتراك بنجاح! سيتم تفعيل حسابك خلال ثوانٍ'),
+            backgroundColor: Color(0xFF4CAF50),
+            duration: Duration(seconds: 6),
+          ),
+        );
+      } else if (result == 'canceled') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم إلغاء عملية الدفع'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    });
   }
 
   /// On web, Firebase Auth restores the session asynchronously.
@@ -541,14 +570,18 @@ class _HomeScreenState extends State<HomeScreen> {
                           delegate: SliverChildBuilderDelegate((ctx, i) {
                             final item = items[i];
                             return GestureDetector(
-                              onTap: () => Navigator.push(
+                              onTap: () =>
+                                  SubscriptionService.instance.requireSubscription(
                                 context,
-                                MaterialPageRoute(
-                                  builder: (_) => item.isAd
-                                      ? PostDetailScreen.fromAd(item.ad!)
-                                      : PostDetailScreen.fromProfile(
-                                          item.profile!,
-                                        ),
+                                onAllowed: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => item.isAd
+                                        ? PostDetailScreen.fromAd(item.ad!)
+                                        : PostDetailScreen.fromProfile(
+                                            item.profile!,
+                                          ),
+                                  ),
                                 ),
                               ),
                               child: item.isAd
